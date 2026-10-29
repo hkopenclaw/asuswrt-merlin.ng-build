@@ -114,9 +114,9 @@ jobs:
           # （舊 swig 只係警告，新 swig 直接報錯）；上游 libcap-ng 0.8.5
           # 都刪走咗呢段 handler。呢度用同等功能嘅 %exception 取代，
           # 保留原有行為，只改一個字
-          cd merlin/release/src-rt-6.x.4708/router/libcap-ng/bindings/src
-          sed -i 's/%except(python)/%exception(python)/' capng_swig.i
-          grep -q '%exception(python)' capng_swig.i
+          found=0
+          for f in merlin/release/src/router/libcap-ng/bindings/src/capng_swig.i merlin/release/src-rt-6.x.4708/router/libcap-ng/bindings/src/capng_swig.i; do if [ -f $f ]; then found=1; sed -i 's/%except(python)/%exception(python)/' $f; grep -q '%exception(python)' $f; echo Patched:$f; sed -n '28,36p' $f; else echo Skipping:$f; fi; done
+          if [ $found -eq 0 ]; then echo ::error::No capng_swig.i found in either candidate path; exit 1; fi
 
       - name: Build RT-AC68U firmware
         run: |

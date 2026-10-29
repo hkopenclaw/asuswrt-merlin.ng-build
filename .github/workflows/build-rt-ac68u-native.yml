@@ -19,8 +19,12 @@
 # 24.04 注意（wiki 係按 Ubuntu 20.04 寫，GitHub 已經冇 20.04 runner）：
 # - package list 照 wiki 抄落嚟，但有一個已預先剔走：automake-1.15
 #   （24.04 冇呢個 package；Docker 版 build 冇佢都成功，證明唔需要）。
-# - 其他 package 名喺 24.04 有機會改名/移除，第一次跑如果 apt 報
-#   missing package，刪走嗰個再跑就得，預咗要 iterate 一兩次。
+# - 已證實（2026-10-30 原生 run 40957100027 嘅 apt log）：24.04 冇
+#   python、gconf-editor、libncurses5，所以下面個 list 已經改用
+#   python-is-python3 並刪走 gconf-editor 同 libncurses5。
+#   注意：libncurses5-dev 喺 24.04 冇問題（嗰次 log 入面冇佢嘅事），
+#   所以留返，唔好同 libncurses5 撈亂。
+# - 其他 package 名如果再跑仲有 missing，刪走嗰個再跑就得。
 # - wiki 話要將 /bin/sh 由 dash 轉返 bash（HND model 先必須，SDK6
 #   未必需要），呢度照做，CI 環境用 debconf 非互動方式做。
 # - wiki 建議 rsync 個 source copy 出嚟先編（方便清理），CI 入面
@@ -75,7 +79,7 @@ jobs:
           sudo apt-get install -y libtool-bin cmake libproxy-dev uuid-dev liblzo2-dev autoconf autoconf-archive automake bash bison \
             bzip2 diffutils file flex m4 g++ gawk groff-base libncurses5-dev libtool libslang2 make patch perl pkg-config shtool \
             subversion tar texinfo zlib1g zlib1g-dev git gettext libexpat1-dev libssl-dev cvs gperf unzip \
-            python libxml-parser-perl gcc-multilib gconf-editor libxml2-dev g++-multilib gitk libncurses5 mtd-utils \
+            python-is-python3 libxml-parser-perl gcc-multilib libxml2-dev g++-multilib gitk mtd-utils \
             libncurses5-dev libvorbis-dev git autopoint autogen sed build-essential intltool libglib2.0-dev \
             xutils-dev lib32z1-dev lib32stdc++6 xsltproc gtk-doc-tools libelf1:i386 gengetopt
 

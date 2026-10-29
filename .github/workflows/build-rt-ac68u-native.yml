@@ -1,0 +1,133 @@
+# DRAFT — 原生版 RT-AC68U Merlin build（唔用 ivano Docker image）
+#
+# 草稿狀態：未經試跑。審批後先放去你自己 repo 嘅 .github/workflows/
+# 目錄並改名（例如 build-rt-ac68u-native.yml），放喺呢度唔會自動生效。
+#
+# 做法來源：RMerl/asuswrt-merlin.ng wiki「Compile Firmware from source」
+# （https://github.com/RMerl/asuswrt-merlin.ng/wiki/Compile-Firmware-from-source）
+# - RT-AC68U 屬於 Broadcom SDK6/SDK7 ARM 平台，喺 release/src-rt-6.x.4708
+#   目錄用 `make rt-ac68u` 編譯。
+# - toolchain 嚟自 RMerlin 自己嘅 am-toolchains repo：
+#   hndtools-arm-linux-2.6.36-uclibc-4.5.3（gcc 4.5.3 + uClibc），
+#   即係而家 Docker 版 build.log 入面見到嘅同一套 toolchain。
+#   （注：而家 Docker 版 workflow 入面，image 入面嘅 toolchain 路徑就係
+#   /home/docker/am-toolchains/brcm-arm-sdk——ivano 個 image 入面裝嘅
+#   根本就係呢套，只係預載咗。）
+# - wiki 建議嘅 build 步驟（32-bit libs → apt → clone am-toolchains →
+#   symlink → PATH → make）全部搬咗入呢個 workflow。
+#
+# 24.04 注意（wiki 係按 Ubuntu 20.04 寫，GitHub 已經冇 20.04 runner）：
+# - package list 照 wiki 抄落嚟，但有一個已預先剔走：automake-1.15
+#   （24.04 冇呢個 package；Docker 版 build 冇佢都成功，證明唔需要）。
+# - 其他 package 名喺 24.04 有機會改名/移除，第一次跑如果 apt 報
+#   missing package，刪走嗰個再跑就得，預咗要 iterate 一兩次。
+# - wiki 話要將 /bin/sh 由 dash 轉返 bash（HND model 先必須，SDK6
+#   未必需要），呢度照做，CI 環境用 debconf 非互動方式做。
+# - wiki 建議 rsync 個 source copy 出嚟先編（方便清理），CI 入面
+#   checkout 本身已經係即棄嘅，所以跳過呢步，直接喺 merlin/ 入面編。
+
+name: Build RT-AC68U Merlin firmware (native, no Docker image)
+
+on:
+  workflow_dispatch:
+    inputs:
+      merlin_ref:
+        description: "RMerl/asuswrt-merlin.ng 的 branch 或 tag（預設為最後一個 386 正式版）"
+        required: true
+        default: "386.14_2"
+      am_toolchains_ref:
+        description: "RMerl/am-toolchains 的 branch、tag 或 commit SHA（留空 = 預設 branch；填 commit SHA 可以 pin 死 toolchain 版本）"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # SDK6 全編譯用 -j1 會比較慢，預留到 GitHub job 上限 6 小時
+    timeout-minutes: 360
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        # Merlin 原始碼加編譯產物要 10GB 以上，先清走 runner 預裝嘅大件嘢
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h
+
+      - name: Enable 32-bit support
+        # 舊 Broadcom toolchain 係 32-bit，64-bit host 一定要有 i386 支援
+        run: sudo dpkg --add-architecture i386
+
+      - name: Switch /bin/sh from dash to bash
+        # wiki 要求（HND model 必須，SDK6 照做無害）；CI 用非互動方式
+        run: |
+          echo "dash dash/sh boolean false" | sudo debconf-set-selections
+          sudo dpkg-reconfigure -f noninteractive dash
+
+      - name: Install build dependencies
+        # package list 照 RMerlin wiki（Ubuntu 20.04 版），見檔頭 24.04 注意
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtool-bin cmake libproxy-dev uuid-dev liblzo2-dev autoconf autoconf-archive automake bash bison \
+            bzip2 diffutils file flex m4 g++ gawk groff-base libncurses5-dev libtool libslang2 make patch perl pkg-config shtool \
+            subversion tar texinfo zlib1g zlib1g-dev git gettext libexpat1-dev libssl-dev cvs gperf unzip \
+            python libxml-parser-perl gcc-multilib gconf-editor libxml2-dev g++-multilib gitk libncurses5 mtd-utils \
+            libncurses5-dev libvorbis-dev git autopoint autogen sed build-essential intltool libglib2.0-dev \
+            xutils-dev lib32z1-dev lib32stdc++6 xsltproc gtk-doc-tools libelf1:i386 gengetopt
+
+      - name: Checkout Merlin source
+        uses: actions/checkout@v4
+        with:
+          repository: RMerl/asuswrt-merlin.ng
+          ref: ${{ inputs.merlin_ref }}
+          path: merlin
+          fetch-depth: 1
+
+      - name: Checkout RMerlin toolchains
+        # 原生 toolchain 來源，唔經任何第三方 image
+        uses: actions/checkout@v4
+        with:
+          repository: RMerl/am-toolchains
+          ref: ${{ inputs.am_toolchains_ref }}
+          path: am-toolchains
+          fetch-depth: 1
+
+      - name: Set up SDK6 toolchain
+        # 照 wiki SDK6/SDK7 ARM 平台嗰節：symlink + PATH
+        run: |
+          sudo ln -s "$GITHUB_WORKSPACE/am-toolchains/brcm-arm-sdk/hndtools-arm-linux-2.6.36-uclibc-4.5.3" /opt/brcm-arm
+          ln -s "$GITHUB_WORKSPACE/am-toolchains/brcm-arm-sdk" "$GITHUB_WORKSPACE/merlin/release/src-rt-6.x.4708/toolchains"
+          ls -l /opt/brcm-arm/bin/ | head
+          /opt/brcm-arm/bin/arm-brcm-linux-uclibcgnueabi-gcc --version | head -1
+
+      - name: Build RT-AC68U firmware
+        run: |
+          export PATH="$PATH:/opt/brcm-arm/bin"
+          export MAKEFLAGS="-j 1"
+          export MERLINUPDATE=y
+          cd merlin/release/src-rt-6.x.4708
+          # 關掉 stdin：make 過程遇到未答嘅 Kconfig 選項會停低等輸入，
+          # 冇 TTY 嘅 CI 環境會直接卡住
+          make clean </dev/null
+          make rt-ac68u </dev/null 2>&1 | tee ../../build.log
+          ls -lh image/
+
+      - name: Generate checksums
+        run: |
+          cd merlin/release/src-rt-6.x.4708/image
+          for f in *.trx; do sha256sum "$f" > "$f.sha256"; done
+          ls -lh
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: RT-AC68U-merlin-${{ inputs.merlin_ref }}-native
+          path: |
+            merlin/release/src-rt-6.x.4708/image/*.trx
+            merlin/release/src-rt-6.x.4708/image/*.trx.sha256
+            merlin/build.log
+          if-no-files-found: error

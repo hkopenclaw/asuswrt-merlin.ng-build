@@ -1,0 +1,111 @@
+# Build RT-AC68U Merlin firmware
+#
+# 設計來源：
+# - 官方 wiki：RT-AC68U 屬於 Broadcom SDK6/SDK7 ARM 平台，喺
+#   release/src-rt-6.x.4708 目錄用 `make rt-ac68u` 編譯。
+# - oivano/asuswrt-merlin.ng 的 tools/build.sh：用 Docker 裝住 SDK6 toolchain
+#   嚟編，DSL-AC68U 同 RT-AC68U 共用同一個 src-rt-6.x.4708 樹同同一套
+#   toolchain，所以 build 層面由 dsl-ac68u 改成 rt-ac68u 就得。
+#   但注意：oivano 個 repo 本身係 DSL-AC68U 專用 fork（有 DSL firmware 包裝
+#   同佢自己加嘅功能），呢個 workflow 嘅 source 改用 RMerl 上游 386.14_2，
+#   只係借 oivano 嘅 Docker 編譯做法，唔係直接用佢個 tree。
+# - oivano 用嘅係 CircleCI，呢個 workflow 將同一套做法搬去 GitHub Actions。
+#
+# 用法：將呢個檔放喺你自己 repo 嘅 .github/workflows/ 目錄，
+# 去 Actions 分頁按 Run workflow，build 完喺 Artifacts 下載 .trx。
+
+name: Build RT-AC68U Merlin firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      merlin_ref:
+        description: "RMerl/asuswrt-merlin.ng 的 branch 或 tag（預設為最後一個 386 正式版）"
+        required: true
+        default: "386.14_2"
+      toolchain_image:
+        description: "內含 SDK6 toolchain 的 Docker image（oivano 項目所用嗰個）"
+        required: true
+        default: "ivano/asuswrt-merlin-toolchains-custom:latest"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # SDK6 全編譯用 -j1 會比較慢，預留到 GitHub job 上限 6 小時
+    timeout-minutes: 360
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        # Merlin 原始碼加編譯產物要 10GB 以上，先清走 runner 預裝嘅大件嘢
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h
+
+      - name: Checkout Merlin source
+        uses: actions/checkout@v4
+        with:
+          repository: RMerl/asuswrt-merlin.ng
+          ref: ${{ inputs.merlin_ref }}
+          path: merlin
+          fetch-depth: 1
+
+      - name: Pull toolchain image
+        run: docker pull "${{ inputs.toolchain_image }}"
+
+      - name: Build RT-AC68U firmware
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/merlin:/home/docker/project" \
+            -w /home/docker/project \
+            -u "$(id -u):$(id -g)" \
+            "${{ inputs.toolchain_image }}" \
+            bash -c '
+              set -euo pipefail
+              cd /home/docker/project
+              # 掛載點刻意同 oivano 嘅 CircleCI 設定一樣用 /home/docker/project，
+              # 咁相對 symlink ../../../am-toolchains/brcm-arm-sdk 先會指到
+              # image 入面內置嘅 toolchain SDK。
+              SDK_DIR=/home/docker/am-toolchains/brcm-arm-sdk
+              if [ -d "$SDK_DIR/hndtools-arm-linux-2.6.36-uclibc-4.5.3" ]; then
+                TOOLCHAIN_BIN="$SDK_DIR/hndtools-arm-linux-2.6.36-uclibc-4.5.3"
+                if [ ! -e release/src-rt-6.x.4708/toolchains ]; then
+                  ln -s ../../../am-toolchains/brcm-arm-sdk release/src-rt-6.x.4708/toolchains
+                fi
+              elif [ -d /opt/brcm-arm ]; then
+                TOOLCHAIN_BIN=/opt/brcm-arm
+              else
+                echo "Error: SDK6 toolchain not found in image" >&2
+                exit 1
+              fi
+              export PATH="$PATH:$TOOLCHAIN_BIN/bin"
+              export LD_LIBRARY_PATH="$TOOLCHAIN_BIN/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              export MAKEFLAGS="-j 1"
+              export MERLINUPDATE=y
+              cd release/src-rt-6.x.4708
+              # 關掉 stdin：make 過程遇到未答嘅 Kconfig 選項會停低等輸入，
+              # 冇 TTY 嘅 CI 環境會直接卡住
+              make clean </dev/null
+              make rt-ac68u </dev/null 2>&1 | tee ../../build.log
+              ls -lh image/
+            '
+
+      - name: Generate checksums
+        run: |
+          cd merlin/release/src-rt-6.x.4708/image
+          for f in *.trx; do sha256sum "$f" > "$f.sha256"; done
+          ls -lh
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: RT-AC68U-merlin-${{ inputs.merlin_ref }}
+          path: |
+            merlin/release/src-rt-6.x.4708/image/*.trx
+            merlin/release/src-rt-6.x.4708/image/*.trx.sha256
+            merlin/build.log
+          if-no-files-found: error

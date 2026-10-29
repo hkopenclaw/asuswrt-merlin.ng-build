@@ -108,8 +108,21 @@ jobs:
           ls -l /opt/brcm-arm/bin/ | head
           /opt/brcm-arm/bin/arm-brcm-linux-uclibcgnueabi-gcc --version | head -1
 
+      - name: Patch libcap-ng for swig 4.2 (Ubuntu 24.04)
+        run: |
+          # Ubuntu 24.04 嘅 swig 4.2 已經唔再認已廢棄嘅 %except directive
+          # （舊 swig 只係警告，新 swig 直接報錯）；上游 libcap-ng 0.8.5
+          # 都刪走咗呢段 handler。呢度用同等功能嘅 %exception 取代，
+          # 保留原有行為，只改一個字
+          cd merlin/release/src-rt-6.x.4708/router/libcap-ng/bindings/src
+          sed -i 's/%except(python)/%exception(python)/' capng_swig.i
+          grep -q '%exception(python)' capng_swig.i
+
       - name: Build RT-AC68U firmware
         run: |
+          # 冇咗 pipefail，`make ... | tee build.log` 條 pipeline 嘅 exit status 係嚟自 tee，
+          # make 失敗都會當成功，直到 Generate checksums 嗰步先露餡；加咗 pipefail，build 步驟會喺正確位置失敗
+          set -o pipefail
           export PATH="$PATH:/opt/brcm-arm/bin"
           export MAKEFLAGS="-j 1"
           export MERLINUPDATE=y

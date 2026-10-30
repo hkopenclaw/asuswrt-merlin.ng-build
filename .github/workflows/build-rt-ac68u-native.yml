@@ -110,13 +110,25 @@ jobs:
 
       - name: Patch libcap-ng for swig 4.2 (Ubuntu 24.04)
         run: |
-          # Ubuntu 24.04 嘅 swig 4.2 已經唔再認已廢棄嘅 %except directive
-          # （舊 swig 只係警告，新 swig 直接報錯）；上游 libcap-ng 0.8.5
-          # 都刪走咗呢段 handler。呢度用同等功能嘅 %exception 取代，
-          # 保留原有行為，只改一個字
+          # Ubuntu 24.04 的 swig 4.2 已移除 %except directive；舊版只係警告，
+          # 新版直接報錯。之前試過改名做 %exception(python)，run #5 證實
+          # 喺 swig 4.2 照樣喺第 32 行報 Syntax error——%exception 唔接受
+          # (python) 呢種 language 寫法。跟上游 libcap-ng 0.8.5 commit
+          # 30453b6 做法，成段刪走呢個 Python exception handler（只影響
+          # Python binding 的錯誤轉換，firmware 本身不用它）。
           found=0
-          for f in merlin/release/src/router/libcap-ng/bindings/src/capng_swig.i merlin/release/src-rt-6.x.4708/router/libcap-ng/bindings/src/capng_swig.i; do if [ -f $f ]; then found=1; sed -i 's/%except(python)/%exception(python)/' $f; grep -q '%exception(python)' $f; echo Patched:$f; sed -n '28,36p' $f; else echo Skipping:$f; fi; done
-          if [ $found -eq 0 ]; then echo ::error::No capng_swig.i found in either candidate path; exit 1; fi
+          for f in merlin/release/src/router/libcap-ng/bindings/src/capng_swig.i merlin/release/src-rt-6.x.4708/router/libcap-ng/bindings/src/capng_swig.i; do
+            if [ -f "$f" ]; then
+              found=1
+              sed -i '/^%except(python) {/,/^}$/d; /^%exception(python) {/,/^}$/d' "$f"
+              if grep -q '%except(python)\|%exception(python)' "$f"; then echo "::error::libcap-ng exception handler still present in $f"; exit 1; fi
+              echo "Patched:$f"
+              sed -n '28,36p' "$f"
+            else
+              echo "Skipping:$f"
+            fi
+          done
+          if [ $found -eq 0 ]; then echo "::error::No capng_swig.i found in either candidate path"; exit 1; fi
 
       - name: Build RT-AC68U firmware
         run: |

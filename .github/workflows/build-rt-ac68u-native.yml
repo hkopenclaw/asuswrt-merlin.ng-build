@@ -108,7 +108,7 @@ jobs:
           ls -l /opt/brcm-arm/bin/ | head
           /opt/brcm-arm/bin/arm-brcm-linux-uclibcgnueabi-gcc --version | head -1
 
-            - name: Disable libcap-ng Python and Python3 bindings (firmware doesn't use them)
+- name: Disable libcap-ng Python and Python3 bindings (firmware doesn't use them)
         run: |
           # libcap-ng Python and Python3 bindings 喺交叉編譯嗰陣要 target Python headers，
           # 但 firmware 本身根本唔用呢個 binding；configure 係 auto 模式

@@ -25,7 +25,7 @@
 #   注意：libncurses5-dev 喺 24.04 冇問題（嗰次 log 入面冇佢嘅事），
 #   所以留返，唔好同 libncurses5 撈亂。
 # - 其他 package 名如果再跑仲有 missing，刪走嗰個再跑就得。
-# - wiki 話要將 /bin/sh 由 dash 轉返 bash（HND model 必須，SDK6
+# - wiki 話要將 /bin/sh 由 dash 轉返 bash（HND model 先必須，SDK6
 #   未必需要），呢度照做，CI 環境用 debconf 非互動方式做。
 # - wiki 建議 rsync 個 source copy 出嚟先編（方便清理），CI 入面
 #   checkout 本身已經係即棄嘅，所以跳過呢步，直接喺 merlin/ 入面編。

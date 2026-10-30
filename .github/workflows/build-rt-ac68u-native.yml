@@ -36,9 +36,9 @@ on:
   workflow_dispatch:
     inputs:
       merlin_ref:
-        description: "RMerl/asuswrt-merlin.ng 的 branch 或 tag（預設為最後一個 386 正式版）"
+        description: "hkopenclaw/asuswrt-merlin.ng fork 的 branch 或 tag（預設為 phase 2 branch：ac68u-phase2）"
         required: true
-        default: "386.14_2"
+        default: "ac68u-phase2"
       am_toolchains_ref:
         description: "RMerl/am-toolchains 的 branch、tag 或 commit SHA（留空 = 預設 branch；填 commit SHA 可以 pin 死 toolchain 版本）"
         required: false
@@ -86,7 +86,7 @@ jobs:
       - name: Checkout Merlin source
         uses: actions/checkout@v4
         with:
-          repository: RMerl/asuswrt-merlin.ng
+          repository: hkopenclaw/asuswrt-merlin.ng
           ref: ${{ inputs.merlin_ref }}
           path: merlin
           fetch-depth: 1

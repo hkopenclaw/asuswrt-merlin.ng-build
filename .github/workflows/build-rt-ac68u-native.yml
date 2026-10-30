@@ -25,7 +25,7 @@
 #   注意：libncurses5-dev 喺 24.04 冇問題（嗰次 log 入面冇佢嘅事），
 #   所以留返，唔好同 libncurses5 撈亂。
 # - 其他 package 名如果再跑仲有 missing，刪走嗰個再跑就得。
-# - wiki 話要將 /bin/sh 由 dash 轉返 bash（HND model 先必須，SDK6
+# - wiki 話要將 /bin/sh 由 dash 轉返 bash（HND model 必須，SDK6
 #   未必需要），呢度照做，CI 環境用 debconf 非互動方式做。
 # - wiki 建議 rsync 個 source copy 出嚟先編（方便清理），CI 入面
 #   checkout 本身已經係即棄嘅，所以跳過呢步，直接喺 merlin/ 入面編。
@@ -108,27 +108,15 @@ jobs:
           ls -l /opt/brcm-arm/bin/ | head
           /opt/brcm-arm/bin/arm-brcm-linux-uclibcgnueabi-gcc --version | head -1
 
-      - name: Patch libcap-ng for swig 4.2 (Ubuntu 24.04)
+      - name: Disable libcap-ng Python binding (firmware doesn't use it)
         run: |
-          # Ubuntu 24.04 的 swig 4.2 已移除 %except directive；舊版只係警告，
-          # 新版直接報錯。之前試過改名做 %exception(python)，run #5 證實
-          # 喺 swig 4.2 照樣喺第 32 行報 Syntax error——%exception 唔接受
-          # (python) 呢種 language 寫法。跟上游 libcap-ng 0.8.5 commit
-          # 30453b6 做法，成段刪走呢個 Python exception handler（只影響
-          # Python binding 的錯誤轉換，firmware 本身不用它）。
-          found=0
-          for f in merlin/release/src/router/libcap-ng/bindings/src/capng_swig.i merlin/release/src-rt-6.x.4708/router/libcap-ng/bindings/src/capng_swig.i; do
-            if [ -f "$f" ]; then
-              found=1
-              sed -i '/^%except(python) {/,/^}$/d; /^%exception(python) {/,/^}$/d' "$f"
-              if grep -q '%except(python)\|%exception(python)' "$f"; then echo "::error::libcap-ng exception handler still present in $f"; exit 1; fi
-              echo "Patched:$f"
-              sed -n '28,36p' "$f"
-            else
-              echo "Skipping:$f"
-            fi
-          done
-          if [ $found -eq 0 ]; then echo "::error::No capng_swig.i found in either candidate path"; exit 1; fi
+          # libcap-ng Python binding 喺交叉編譯嗰陣要 target Python headers，
+          # 但 firmware 本身根本唔用呢個 binding；configure 係 auto 模式
+          # （invocation 入面冇 --with-python3），所以追加 --without-python3
+          # 明確停用，成條 binding 問題鏈就此斬斷
+          cd merlin/release/src-rt-6.x.4708/router
+          sed -i '/^libcap-ng\/configure:/,/^$/s|$(CONFIGURE) --enable-shared|& --without-python3|' Makefile
+          grep -A 5 '^libcap-ng/configure:' Makefile | grep -q -- '--without-python3'
 
       - name: Build RT-AC68U firmware
         run: |

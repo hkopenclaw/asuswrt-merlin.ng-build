@@ -108,15 +108,15 @@ jobs:
           ls -l /opt/brcm-arm/bin/ | head
           /opt/brcm-arm/bin/arm-brcm-linux-uclibcgnueabi-gcc --version | head -1
 
-      - name: Disable libcap-ng Python binding (firmware doesn't use it)
+            - name: Disable libcap-ng Python and Python3 bindings (firmware doesn't use them)
         run: |
-          # libcap-ng Python binding 喺交叉編譯嗰陣要 target Python headers，
+          # libcap-ng Python and Python3 bindings 喺交叉編譯嗰陣要 target Python headers，
           # 但 firmware 本身根本唔用呢個 binding；configure 係 auto 模式
-          # （invocation 入面冇 --with-python3），所以追加 --without-python3
+          # （invocation 入面冇 --with-python3），所以追加 --without-python --without-python3
           # 明確停用，成條 binding 問題鏈就此斬斷
           cd merlin/release/src-rt-6.x.4708/router
-          sed -i '/^libcap-ng\/configure:/,/^$/s|$(CONFIGURE) --enable-shared|& --without-python3|' Makefile
-          grep -A 5 '^libcap-ng/configure:' Makefile | grep -q -- '--without-python3'
+          sed -i '/^libcap-ng\/configure:/,/^$/s|$(CONFIGURE) --enable-shared|& --without-python --without-python3|' Makefile
+          grep -A 5 '^libcap-ng/configure:' Makefile | grep -q -- '--without-python --without-python3'
 
       - name: Build RT-AC68U firmware
         run: |

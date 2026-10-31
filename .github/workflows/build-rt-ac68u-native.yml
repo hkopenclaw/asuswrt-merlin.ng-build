@@ -38,7 +38,7 @@ on:
       merlin_ref:
         description: "hkopenclaw/asuswrt-merlin.ng fork 的 branch 或 tag（預設為 phase 2 branch：ac68u-phase2）"
         required: true
-        default: "ac68u-phase2"
+        default: "386.14_x"
       am_toolchains_ref:
         description: "RMerl/am-toolchains 的 branch、tag 或 commit SHA（留空 = 預設 branch；填 commit SHA 可以 pin 死 toolchain 版本）"
         required: false

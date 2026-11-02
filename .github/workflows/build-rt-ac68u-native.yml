@@ -114,7 +114,7 @@ jobs:
           # 但 firmware 本身根本唔用呢個 binding；configure 係 auto 模式
           # （invocation 入面冇 --with-python3），所以追加 --without-python --without-python3
           # 明確停用，成條 binding 問題鏈就此斬斷
-          cd merlin/release/src-rt-6.x.4708/router
+          cd merlin/release/src-rt-6.x.470/router
           sed -i '/^libcap-ng\/configure:/,/^$/s|$(CONFIGURE) --enable-shared|& --without-python --without-python3|' Makefile
           grep -A 5 '^libcap-ng/configure:' Makefile | grep -q -- '--without-python --without-python3'
 
@@ -133,6 +133,19 @@ jobs:
           make rt-ac68u </dev/null 2>&1 | tee ../../build.log
           ls -lh image/
 
+      - name: Suffix firmware with Merlin source commit
+        id: merlin_commit
+        run: |
+          cd merlin
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          FULL_SHA="$(git rev-parse HEAD)"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          cd release/src-rt-6.x.4708/image
+          for f in *.trx; do mv "$f" "${f%.trx}-$SHORT_SHA.trx"; done
+          ls -lh
+          mv "$GITHUB_WORKSPACE/merlin/build.log" "$GITHUB_WORKSPACE/merlin/run${{ github.run_number }}-build.log"
+
       - name: Generate checksums
         run: |
           cd merlin/release/src-rt-6.x.4708/image
@@ -142,9 +155,9 @@ jobs:
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: RT-AC68U-merlin-${{ inputs.merlin_ref }}-native
+          name: RT-AC68U-merlin-${{ inputs.merlin_ref }}-native-${{ steps.merlin_commit.outputs.short_sha }}
           path: |
             merlin/release/src-rt-6.x.4708/image/*.trx
             merlin/release/src-rt-6.x.4708/image/*.trx.sha256
-            merlin/build.log
+            merlin/run${{ github.run_number }}-build.log
           if-no-files-found: error

@@ -1,18 +1,42 @@
-# Build RT-AC68U Merlin firmware
+# Build RT-AC68U Merlin firmware (native, no Docker image)
 #
-# 設計來源：
-# - 官方 wiki：RT-AC68U 屬於 Broadcom SDK6/SDK7 ARM 平台，喺
-#   release/src-rt-6.x.4708 目錄用 `make rt-ac68u` 編譯。
-# - oivano/asuswrt-merlin.ng 的 tools/build.sh：用 Docker 裝住 SDK6 toolchain
-#   嚟編，DSL-AC68U 同 RT-AC68U 共用同一個 src-rt-6.x.4708 樹同同一套
-#   toolchain，所以 build 層面由 dsl-ac68u 改成 rt-ac68u 就得。
-#   但注意：oivano 個 repo 本身係 DSL-AC68U 專用 fork（有 DSL firmware 包裝
-#   同佢自己加嘅功能），呢個 workflow 嘅 source 改用 RMerl 上游 386.14_2，
-#   只係借 oivano 嘅 Docker 編譯做法，唔係直接用佢個 tree。
-# - oivano 用嘅係 CircleCI，呢個 workflow 將同一套做法搬去 GitHub Actions。
+# Native build: compiles from source on the GitHub runner, without the
+# ivano Docker image. RT-AC68U is a Broadcom SDK6/SDK7 ARM platform, built
+# with `make rt-ac68u` in release/src-rt-6.x.4708.
+# The toolchain comes from RMerlin's own am-toolchains repo:
+# hndtools-arm-linux-2.6.36-uclibc-4.5.3 (gcc 4.5.3 + uClibc), the same
+# toolchain the Docker image used to provide pre-installed
+# (/home/docker/am-toolchains/brcm-arm-sdk in the ivano image).
+# Build steps follow the RMerlin wiki "Compile Firmware from source"
+# (https://github.com/RMerl/asuswrt-merlin.ng/wiki/Compile-Firmware-from-source):
+# 32-bit libs -> apt -> clone am-toolchains -> symlink -> PATH -> make.
 #
-# 用法：將呢個檔放喺你自己 repo 嘅 .github/workflows/ 目錄，
-# 去 Actions 分頁按 Run workflow，build 完喺 Artifacts 下載 .trx。
+# Ubuntu 24.04 notes (the wiki was written for Ubuntu 20.04, which GitHub
+# no longer offers as a runner):
+# - The package list follows the wiki, with one package pre-removed:
+#   automake-1.15 (not available on 24.04; Docker builds succeeded without
+#   it, so it is not needed).
+# - Confirmed from the 2026-10-30 native run 40957100027 apt log: 24.04 has
+#   no python, gconf-editor, or libncurses5, so the list below uses
+#   python-is-python3 and drops gconf-editor and libncurses5.
+#   Note: libncurses5-dev is fine on 24.04 (nothing about it in that log),
+#   so it stays; do not confuse it with libncurses5.
+# - If any other package name is still missing on a later run, drop that
+#   one and rerun.
+# - The wiki asks to switch /bin/sh from dash back to bash (required for
+#   HND models, not necessarily for SDK6); this workflow does it anyway,
+#   using debconf non-interactively in CI.
+# - The wiki suggests rsyncing a source copy before building (for easy
+#   cleanup); in CI the checkout itself is disposable, so this step is
+#   skipped and the build runs directly in merlin/.
+#
+# Artifact layout: the .trx, its .sha256, and the run build log are staged
+# into merlin/release/ before upload, so the downloaded artifact zip
+# contains the files directly instead of nested under
+# release/src-rt-6.x.4708/image/. upload-artifact v4 uses the least common
+# ancestor of all upload paths as the artifact root, so paths all under
+# merlin/release/ upload flat. The merlin/release/*.trx glob is
+# non-recursive, so the source tree under merlin/release/ is not picked up.
 
 name: Build RT-AC68U Merlin firmware
 
@@ -20,13 +44,13 @@ on:
   workflow_dispatch:
     inputs:
       merlin_ref:
-        description: "RMerl/asuswrt-merlin.ng 的 branch 或 tag（預設為最後一個 386 正式版）"
+        description: "Branch or tag of the hkopenclaw/asuswrt-merlin.ng fork (default: 386.14_x)"
         required: true
-        default: "386.14_2"
-      toolchain_image:
-        description: "內含 SDK6 toolchain 的 Docker image（oivano 項目所用嗰個）"
-        required: true
-        default: "ivano/asuswrt-merlin-toolchains-custom:latest"
+        default: "386.14_x"
+      am_toolchains_ref:
+        description: "Branch, tag, or commit SHA of RMerl/am-toolchains (empty = default branch; a commit SHA pins the toolchain version)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -34,65 +58,104 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    # SDK6 全編譯用 -j1 會比較慢，預留到 GitHub job 上限 6 小時
+    # A full SDK6 build with -j1 is slow; allow up to the GitHub job limit of 6 hours
     timeout-minutes: 360
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v4
 
       - name: Free disk space
-        # Merlin 原始碼加編譯產物要 10GB 以上，先清走 runner 預裝嘅大件嘢
+        # Merlin source plus build products need 10GB or more; clear the runner's pre-installed large items first
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
           df -h
 
+      - name: Enable 32-bit support
+        # The old Broadcom toolchain is 32-bit; a 64-bit host needs i386 support
+        run: sudo dpkg --add-architecture i386
+
+      - name: Switch /bin/sh from dash to bash
+        # Required by the wiki (mandatory for HND models, harmless for SDK6); non-interactive in CI
+        run: |
+          echo "dash dash/sh boolean false" | sudo debconf-set-selections
+          sudo dpkg-reconfigure -f noninteractive dash
+
+      - name: Install build dependencies
+        # Package list follows the RMerlin wiki (Ubuntu 20.04 version); see the 24.04 notes in the file header
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtool-bin cmake libproxy-dev uuid-dev liblzo2-dev autoconf autoconf-archive automake bash bison \
+            bzip2 diffutils file flex m4 g++ gawk groff-base libncurses5-dev libtool libslang2 make patch perl pkg-config shtool \
+            subversion tar texinfo zlib1g zlib1g-dev git gettext libexpat1-dev libssl-dev cvs gperf unzip \
+            python-is-python3 libxml-parser-perl gcc-multilib libxml2-dev g++-multilib mtd-utils \
+            libncurses5-dev libvorbis-dev git autopoint autogen sed build-essential intltool libglib2.0-dev \
+            xutils-dev lib32z1-dev lib32stdc++6 xsltproc gtk-doc-tools libelf1:i386 gengetopt libltdl-dev
+
       - name: Checkout Merlin source
         uses: actions/checkout@v4
         with:
-          repository: RMerl/asuswrt-merlin.ng
+          repository: hkopenclaw/asuswrt-merlin.ng
           ref: ${{ inputs.merlin_ref }}
           path: merlin
           fetch-depth: 1
 
-      - name: Pull toolchain image
-        run: docker pull "${{ inputs.toolchain_image }}"
+      - name: Checkout RMerlin toolchains
+        # Native toolchain source, no third-party image involved
+        uses: actions/checkout@v4
+        with:
+          repository: RMerl/am-toolchains
+          ref: ${{ inputs.am_toolchains_ref }}
+          path: am-toolchains
+          fetch-depth: 1
+
+      - name: Set up SDK6 toolchain
+        # Wiki SDK6/SDK7 ARM section: symlink + PATH
+        run: |
+          sudo ln -s "$GITHUB_WORKSPACE/am-toolchains/brcm-arm-sdk/hndtools-arm-linux-2.6.36-uclibc-4.5.3" /opt/brcm-arm
+          ln -s "$GITHUB_WORKSPACE/am-toolchains/brcm-arm-sdk" "$GITHUB_WORKSPACE/merlin/release/src-rt-6.x.4708/toolchains"
+          ls -l /opt/brcm-arm/bin/ | head
+          /opt/brcm-arm/bin/arm-brcm-linux-uclibcgnueabi-gcc --version | head -1
+
+      - name: Disable libcap-ng Python and Python3 bindings (firmware doesn't use them)
+        run: |
+          # The libcap-ng Python and Python3 bindings need target Python headers
+          # when cross-compiling, but the firmware itself does not use these
+          # bindings; configure runs in auto mode (no --with-python3 in the
+          # invocation), so append --without-python --without-python3 to
+          # disable them explicitly and cut off the whole binding problem chain
+          cd merlin/release/src-rt-6.x.4708/router
+          sed -i '/^libcap-ng\/configure:/,/^$/s|$(CONFIGURE) --enable-shared|& --without-python --without-python3|' Makefile
+          grep -A 5 '^libcap-ng/configure:' Makefile | grep -q -- '--without-python --without-python3'
 
       - name: Build RT-AC68U firmware
         run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/merlin:/home/docker/project" \
-            -w /home/docker/project \
-            -u "$(id -u):$(id -g)" \
-            "${{ inputs.toolchain_image }}" \
-            bash -c '
-              set -euo pipefail
-              cd /home/docker/project
-              # 掛載點刻意同 oivano 嘅 CircleCI 設定一樣用 /home/docker/project，
-              # 咁相對 symlink ../../../am-toolchains/brcm-arm-sdk 先會指到
-              # image 入面內置嘅 toolchain SDK。
-              SDK_DIR=/home/docker/am-toolchains/brcm-arm-sdk
-              if [ -d "$SDK_DIR/hndtools-arm-linux-2.6.36-uclibc-4.5.3" ]; then
-                TOOLCHAIN_BIN="$SDK_DIR/hndtools-arm-linux-2.6.36-uclibc-4.5.3"
-                if [ ! -e release/src-rt-6.x.4708/toolchains ]; then
-                  ln -s ../../../am-toolchains/brcm-arm-sdk release/src-rt-6.x.4708/toolchains
-                fi
-              elif [ -d /opt/brcm-arm ]; then
-                TOOLCHAIN_BIN=/opt/brcm-arm
-              else
-                echo "Error: SDK6 toolchain not found in image" >&2
-                exit 1
-              fi
-              export PATH="$PATH:$TOOLCHAIN_BIN/bin"
-              export LD_LIBRARY_PATH="$TOOLCHAIN_BIN/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-              export MAKEFLAGS="-j 1"
-              export MERLINUPDATE=y
-              cd release/src-rt-6.x.4708
-              # 關掉 stdin：make 過程遇到未答嘅 Kconfig 選項會停低等輸入，
-              # 冇 TTY 嘅 CI 環境會直接卡住
-              make clean </dev/null
-              make rt-ac68u </dev/null 2>&1 | tee ../../build.log
-              ls -lh image/
-            '
+          # Without pipefail, the exit status of `make ... | tee build.log`
+          # comes from tee, so a failed make would still count as success
+          # until the Generate checksums step exposed it; with pipefail, the
+          # build step fails at the right place
+          set -o pipefail
+          export PATH="$PATH:/opt/brcm-arm/bin"
+          export MAKEFLAGS="-j 1"
+          export MERLINUPDATE=y
+          cd merlin/release/src-rt-6.x.4708
+          # Close stdin: an unanswered Kconfig option during make would wait
+          # for input, and CI without a TTY would hang there
+          make clean </dev/null
+          make rt-ac68u </dev/null 2>&1 | tee ../../build.log
+          ls -lh image/
+
+      - name: Suffix firmware with Merlin source commit
+        id: merlin_commit
+        run: |
+          cd merlin
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          FULL_SHA="$(git rev-parse HEAD)"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          cd release/src-rt-6.x.4708/image
+          for f in *.trx; do mv "$f" "${f%.trx}-$SHORT_SHA.trx"; done
+          ls -lh
+          mv "$GITHUB_WORKSPACE/merlin/build.log" "$GITHUB_WORKSPACE/merlin/run${{ github.run_number }}-build.log"
 
       - name: Generate checksums
         run: |
@@ -100,12 +163,24 @@ jobs:
           for f in *.trx; do sha256sum "$f" > "$f.sha256"; done
           ls -lh
 
+      - name: Stage firmware for upload (flat, under release/)
+        # Flatten the artifact layout: copy the .trx, its .sha256, and the
+        # run build log into merlin/release/, so the downloaded artifact zip
+        # contains the files directly instead of nested under
+        # release/src-rt-6.x.4708/image/. See the file header for why this
+        # works (least-common-ancestor root) and why the source tree under
+        # merlin/release/ is not picked up (non-recursive glob).
+        run: |
+          cp merlin/release/src-rt-6.x.4708/image/*.trx merlin/release/src-rt-6.x.4708/image/*.trx.sha256 merlin/release/
+          cp "$GITHUB_WORKSPACE/merlin/run${{ github.run_number }}-build.log" merlin/release/
+          ls -lh merlin/release/*.trx merlin/release/*.trx.sha256 merlin/release/run${{ github.run_number }}-build.log
+
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: RT-AC68U-merlin-${{ inputs.merlin_ref }}
+          name: RT-AC68U-merlin-${{ inputs.merlin_ref }}-${{ steps.merlin_commit.outputs.short_sha }}
           path: |
-            merlin/release/src-rt-6.x.4708/image/*.trx
-            merlin/release/src-rt-6.x.4708/image/*.trx.sha256
-            merlin/build.log
+            merlin/release/*.trx
+            merlin/release/*.trx.sha256
+            merlin/release/run${{ github.run_number }}-build.log
           if-no-files-found: error

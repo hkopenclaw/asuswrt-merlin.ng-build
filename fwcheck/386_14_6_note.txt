@@ -1,0 +1,8 @@
+386.14_6 is available for the RT-AC68U.
+
+Headline changes since 386.14_5:
+- OpenVPN updated to 2.7.9.
+- GPL 52334 security backports (WebUI login audit logging, authentication
+  and input validation, UPnP disabled by default, and more).
+- The firmware check now uses the custom manifest in the build repository.
+- Added a Renew Certificate reminder on the OpenVPN server page.

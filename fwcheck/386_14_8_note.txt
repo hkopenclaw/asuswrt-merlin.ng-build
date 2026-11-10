@@ -1,9 +1,0 @@
-386.14_8 is available for the RT-AC68U.
-
-Headline changes since 386.14_7:
-- Speedtest history fixes: the mobile layout now shows the Ping, Jitter
-  and Interface header row, the Interface header uses the translated
-  label, and the interface dropdown has a label.
-- Settings backup filename now uses the correct firmware version.
-- CA bundle updated to Mozilla's 10-Nov-2026 data, removing the emSign
-  Root CA - C1 and emSign ECC Root CA - C3 roots.

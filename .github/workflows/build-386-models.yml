@@ -248,7 +248,12 @@ jobs:
 
       - name: Install build dependencies
         # Package list follows the RMerlin wiki (Ubuntu 20.04 version); see the 24.04 notes in the file header
+        # NB: the default Azure mirror (azure.archive.ubuntu.com) fails DNS
+        # resolution on these runners (run #3/#4: "Temporary failure resolving"),
+        # so apt-get update fetches no indexes and libelf1:i386 is not found.
+        # Point apt at the main archive instead; it is slower but reliable.
         run: |
+          sudo sed -i -e 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu|' -e 's|https\?://security\.ubuntu\.com/ubuntu|http://archive.ubuntu.com/ubuntu|' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
           sudo apt-get install -y libtool-bin cmake libproxy-dev uuid-dev liblzo2-dev autoconf autoconf-archive automake bash bison \
             bzip2 diffutils file flex m4 g++ gawk groff-base libncurses5-dev libtool libslang2 make patch perl pkg-config shtool \

@@ -54,14 +54,14 @@
 #   cleanup); in CI the checkout itself is disposable, so this step is
 #   skipped and the build runs directly in merlin/.
 #
-# Artifact layout: the .trx, its .sha256, and the run build log are staged
-# into merlin/release/ before upload, so the downloaded artifact zip
+# Artifact layout: the firmware file (matrix.fw_ext: .trx for SDK6, .w for
+# HND), its .sha256, and the run build log are staged into merlin/release/
 # contains the files directly instead of nested under
 # release/src-rt-6.x.4708/image/ or release/src-rt-5.02hnd/image/.
 # upload-artifact v4 uses the least common ancestor of all upload paths as
 # the artifact root, so paths all under merlin/release/ upload flat. The
-# merlin/release/*.trx glob is non-recursive, so the source tree under
-# merlin/release/ is not picked up.
+# merlin/release/*.${{ matrix.fw_ext }} glob is non-recursive, so the source
+# tree under merlin/release/ is not picked up.
 #
 # The libcap-ng Python-bindings fix applies to the router/Makefile shared
 # by every tree (each tree's router/ is a symlink to release/src/router),
@@ -184,11 +184,11 @@ jobs:
           python3 - <<'EOF'
           import json, os
           MODELS = {
-            "rt-ac68u":  {"model": "rt-ac68u",  "artifact": "RT-AC68U",  "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac68u"},
-            "rt-ac86u":  {"model": "rt-ac86u",  "artifact": "RT-AC86U",  "tree": "src-rt-5.02hnd",  "platform": "hnd",  "target": "rt-ac86u"},
-            "rt-ac88u":  {"model": "rt-ac88u",  "artifact": "RT-AC88U",  "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac88u"},
-            "rt-ac3100": {"model": "rt-ac3100", "artifact": "RT-AC3100", "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac3100"},
-            "rt-ac5300": {"model": "rt-ac5300", "artifact": "RT-AC5300", "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac5300"},
+            "rt-ac68u":  {"model": "rt-ac68u",  "artifact": "RT-AC68U",  "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac68u",  "fw_ext": "trx"},
+            "rt-ac86u":  {"model": "rt-ac86u",  "artifact": "RT-AC86U",  "tree": "src-rt-5.02hnd",  "platform": "hnd",  "target": "rt-ac86u",  "fw_ext": "w"},
+            "rt-ac88u":  {"model": "rt-ac88u",  "artifact": "RT-AC88U",  "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac88u",  "fw_ext": "trx"},
+            "rt-ac3100": {"model": "rt-ac3100", "artifact": "RT-AC3100", "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac3100", "fw_ext": "trx"},
+            "rt-ac5300": {"model": "rt-ac5300", "artifact": "RT-AC5300", "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac5300", "fw_ext": "trx"},
           }
           CHECKBOXES = [
             ("BUILD_AC68U", "rt-ac68u"),
@@ -369,35 +369,35 @@ jobs:
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
           cd "release/${{ matrix.tree }}/image"
-          for f in *.trx; do mv "$f" "${f%.trx}-$SHORT_SHA.trx"; done
+          for f in *.${{ matrix.fw_ext }}; do mv "$f" "${f%.${{ matrix.fw_ext }}-$SHORT_SHA.${{ matrix.fw_ext }}"; done
           ls -lh
           mv "$GITHUB_WORKSPACE/merlin/build-${{ matrix.model }}.log" "$GITHUB_WORKSPACE/merlin/run${{ github.run_number }}-build-${{ matrix.model }}.log"
 
       - name: Generate checksums
         run: |
           cd "merlin/release/${{ matrix.tree }}/image"
-          for f in *.trx; do sha256sum "$f" > "$f.sha256"; done
+          for f in *.${{ matrix.fw_ext }}; do sha256sum "$f" > "$f.sha256"; done
           ls -lh
 
       - name: Stage firmware for upload (flat, under release/)
-        # Flatten the artifact layout: copy the .trx, its .sha256, and the
+        # Flatten the artifact layout: copy the firmware file, its .sha256, and the
         # run build log into merlin/release/, so the downloaded artifact zip
         # contains the files directly instead of nested under
         # release/src-rt-*/image/. See the file header for why this
         # works (least-common-ancestor root) and why the source tree under
         # merlin/release/ is not picked up (non-recursive glob).
         run: |
-          cp "merlin/release/${{ matrix.tree }}/image"/*.trx "merlin/release/${{ matrix.tree }}/image"/*.trx.sha256 merlin/release/
+          cp "merlin/release/${{ matrix.tree }}/image"/*.${{ matrix.fw_ext }} "merlin/release/${{ matrix.tree }}/image"/*.${{ matrix.fw_ext }}.sha256 merlin/release/
           cp "$GITHUB_WORKSPACE/merlin/run${{ github.run_number }}-build-${{ matrix.model }}.log" merlin/release/
-          ls -lh merlin/release/*.trx merlin/release/*.trx.sha256 "merlin/release/run${{ github.run_number }}-build-${{ matrix.model }}.log"
+          ls -lh merlin/release/*.${{ matrix.fw_ext }} merlin/release/*.${{ matrix.fw_ext }}.sha256 "merlin/release/run${{ github.run_number }}-build-${{ matrix.model }}.log"
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}-merlin-${{ inputs.merlin_ref }}-${{ steps.merlin_commit.outputs.short_sha }}
           path: |
-            merlin/release/*.trx
-            merlin/release/*.trx.sha256
+            merlin/release/*.${{ matrix.fw_ext }}
+            merlin/release/*.${{ matrix.fw_ext }}.sha256
             merlin/release/run${{ github.run_number }}-build-${{ matrix.model }}.log
           if-no-files-found: error
 

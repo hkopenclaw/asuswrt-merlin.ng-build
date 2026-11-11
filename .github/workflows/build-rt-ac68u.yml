@@ -321,7 +321,9 @@ jobs:
           cd "merlin/release/${{ matrix.tree }}"
           # Close stdin: an unanswered Kconfig option during make would wait
           # for input, and CI without a TTY would hang there
-          make clean </dev/null
+          # No `make clean` here: a fresh CI checkout has nothing to clean,
+        # and for HND it breaks the build (make.common errors out because
+        # the 94908HND.CLEAN profile does not exist in the repo).
           make "${{ matrix.target }}" </dev/null 2>&1 | tee "../../build-${{ matrix.model }}.log"
           ls -lh image/
 

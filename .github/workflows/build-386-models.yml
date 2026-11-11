@@ -242,7 +242,9 @@ jobs:
           sudo dpkg-reconfigure -f noninteractive dash
           sudo ln -sf /bin/bash /bin/sh
           ls -l /bin/sh
-          test "$(readlink -f /bin/sh)" = "/bin/bash"
+          # NB: readlink -f canonicalises through /bin -> /usr/bin, so it
+          # returns /usr/bin/bash, not /bin/bash; compare the basename.
+          test "$(basename "$(readlink -f /bin/sh)")" = "bash"
 
       - name: Install build dependencies
         # Package list follows the RMerlin wiki (Ubuntu 20.04 version); see the 24.04 notes in the file header

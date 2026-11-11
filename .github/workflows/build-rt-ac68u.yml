@@ -19,17 +19,21 @@
 # (https://github.com/RMerl/asuswrt-merlin.ng/wiki/Compile-Firmware-from-source):
 # 32-bit libs -> apt -> clone am-toolchains -> symlink -> PATH -> make.
 #
-# Model selection: the `models` input is a comma-separated list
-# (e.g. "rt-ac68u,rt-ac86u"). A setup job turns it into a matrix, so each
-# selected model builds in its own parallel job; one Run workflow run
-# produces one artifact per model. fail-fast is off, so one model's
-# failure does not cancel the others.
+# Model selection: one checkbox per model (boolean inputs). Tick the
+# models to build; each selected model builds in its own parallel job,
+# so one Run workflow run produces one artifact per model. fail-fast is
+# off, so one model's failure does not cancel the others. RT-AC68U is
+# ticked by default, so pressing Run unchanged still builds AC68U only.
 #
-# Commit selection: `merlin_ref` is a branch or tag (default 386.14_x).
-# `merlin_commit` is an optional full commit SHA that overrides it, so a
-# specific commit can be built (e.g. the 386.14_2 tag/commit for a
-# stock-comparison build). The artifact name carries the checked-out
-# commit's short SHA, so a build from an older commit is identifiable.
+# Version selection: `merlin_ref` is a dropdown (single-select) of
+# firmware versions. 386.14_x is the branch (latest). 386.14_2 is the
+# tag; 386.14_3.._8 map to their version-bump commits (the exact state
+# built as that version) in the setup job. When a new version is bumped
+# (e.g. 386.14_9), add its version-bump commit SHA to the map below.
+# `merlin_commit` is an optional full commit SHA that overrides the
+# dropdown, so any specific commit can be built. The artifact name
+# carries the checked-out commit's short SHA, so a build from an older
+# commit is identifiable.
 #
 # Ubuntu 24.04 notes (the wiki was written for Ubuntu 20.04, which GitHub
 # no longer offers as a runner):
@@ -68,14 +72,50 @@ name: Build Merlin firmware (386 models)
 on:
   workflow_dispatch:
     inputs:
-      models:
-        description: "Comma-separated models to build (e.g. rt-ac68u, rt-ac86u). Valid: rt-ac68u, rt-ac86u, rt-ac88u, rt-ac3100, rt-ac5300"
-        required: true
-        default: "rt-ac68u"
+      build_ac68u:
+        description: "Build RT-AC68U"
+        required: false
+        default: true
+        type: boolean
+      build_ac86u:
+        description: "Build RT-AC86U"
+        required: false
+        default: false
+        type: boolean
+      build_ac88u:
+        description: "Build RT-AC88U"
+        required: false
+        default: false
+        type: boolean
+      build_ac3100:
+        description: "Build RT-AC3100"
+        required: false
+        default: false
+        type: boolean
+      build_ac5300:
+        description: "Build RT-AC5300"
+        required: false
+        default: false
+        type: boolean
+      build_all:
+        description: "Build all models (overrides the individual checkboxes)"
+        required: false
+        default: false
+        type: boolean
       merlin_ref:
-        description: "Branch or tag of the hkopenclaw/asuswrt-merlin.ng fork (default: 386.14_x)"
+        description: "Firmware version to build"
         required: true
         default: "386.14_x"
+        type: choice
+        options:
+          - "386.14_x"
+          - "386.14_2"
+          - "386.14_3"
+          - "386.14_4"
+          - "386.14_5"
+          - "386.14_6"
+          - "386.14_7"
+          - "386.14_8"
       merlin_commit:
         description: "Full commit SHA to build from (optional; overrides merlin_ref when set)"
         required: false
@@ -97,19 +137,49 @@ jobs:
     steps:
       - name: Resolve Merlin ref
         id: resolve-ref
+        env:
+          MERLIN_REF: ${{ inputs.merlin_ref }}
+          MERLIN_COMMIT: ${{ inputs.merlin_commit }}
         run: |
-          if [ -n "${{ inputs.merlin_commit }}" ]; then
-            echo "ref=${{ inputs.merlin_commit }}" >> "$GITHUB_OUTPUT"
-            echo "Building from commit ${{ inputs.merlin_commit }} (overrides merlin_ref)"
-          else
-            echo "ref=${{ inputs.merlin_ref }}" >> "$GITHUB_OUTPUT"
-            echo "Building from ref ${{ inputs.merlin_ref }}"
-          fi
+          python3 - <<'EOF'
+          import os
+          # Version -> git ref. 386.14_x is the branch (latest); 386.14_2
+          # is the tag; 386.14_3.._8 map to their version-bump commits (the
+          # exact state built as that version). Add a new version's
+          # version-bump commit SHA here when it is bumped.
+          VERSION_REFS = {
+            "386.14_x": "386.14_x",
+            "386.14_2": "386.14_2",
+            "386.14_3": "4dddb0a85211c2d94f00468982cd0bc798529e97",
+            "386.14_4": "b32a90458e16039fdfd37fa9068830bdb0681fad",
+            "386.14_5": "a821511bce9aa95ca8c62a85278cb5c8aed8a647",
+            "386.14_6": "a3ef96955ceda31d15a41b2d26cebd6cca626c31",
+            "386.14_7": "e293989591178c19a2809e1af0488fd0609d6b87",
+            "386.14_8": "9410e685ef54c912f800699d6cb4517e003b878e",
+          }
+          commit = os.environ.get("MERLIN_COMMIT", "").strip()
+          if commit:
+            ref = commit
+            print(f"Building from commit {commit} (merlin_commit overrides merlin_ref)")
+          else:
+            version = os.environ.get("MERLIN_REF", "386.14_x")
+            ref = VERSION_REFS.get(version)
+            if ref is None:
+              raise SystemExit(f"Unknown version: {version}. Valid: {', '.join(VERSION_REFS)}")
+            print(f"Building version {version} (ref {ref})")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"ref={ref}\n")
+          EOF
 
       - name: Build model matrix
         id: set-matrix
         env:
-          MODELS_INPUT: ${{ inputs.models }}
+          BUILD_AC68U: ${{ inputs.build_ac68u }}
+          BUILD_AC86U: ${{ inputs.build_ac86u }}
+          BUILD_AC88U: ${{ inputs.build_ac88u }}
+          BUILD_AC3100: ${{ inputs.build_ac3100 }}
+          BUILD_AC5300: ${{ inputs.build_ac5300 }}
+          BUILD_ALL: ${{ inputs.build_all }}
         run: |
           python3 - <<'EOF'
           import json, os
@@ -120,12 +190,19 @@ jobs:
             "rt-ac3100": {"model": "rt-ac3100", "artifact": "RT-AC3100", "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac3100"},
             "rt-ac5300": {"model": "rt-ac5300", "artifact": "RT-AC5300", "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac5300"},
           }
-          selected = [m.strip() for m in os.environ["MODELS_INPUT"].split(",") if m.strip()]
-          unknown = [m for m in selected if m not in MODELS]
-          if unknown:
-            raise SystemExit(f"Unknown model(s): {', '.join(unknown)}. Valid: {', '.join(MODELS)}")
+          CHECKBOXES = [
+            ("BUILD_AC68U", "rt-ac68u"),
+            ("BUILD_AC86U", "rt-ac86u"),
+            ("BUILD_AC88U", "rt-ac88u"),
+            ("BUILD_AC3100", "rt-ac3100"),
+            ("BUILD_AC5300", "rt-ac5300"),
+          ]
+          if os.environ.get("BUILD_ALL") == "true":
+            selected = list(MODELS.keys())
+          else:
+            selected = [m for env, m in CHECKBOXES if os.environ.get(env) == "true"]
           if not selected:
-            raise SystemExit("No models selected.")
+            raise SystemExit("No models selected. Tick at least one model checkbox, or tick Build all models.")
           matrix = {"include": [MODELS[m] for m in selected]}
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
             f.write("matrix=" + json.dumps(matrix) + "\n")

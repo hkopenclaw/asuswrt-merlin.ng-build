@@ -233,9 +233,16 @@ jobs:
 
       - name: Switch /bin/sh from dash to bash
         # Required by the wiki (mandatory for HND models, harmless for SDK6); non-interactive in CI
+        # dpkg-reconfigure can silently leave /bin/sh pointing at dash (run #1
+        # failed because of it: dash `echo -e` prints a literal `-e`, corrupting
+        # bcmdrivers/Kconfig.autogen and failing kernel oldconfig). Force the
+        # symlink and prove it, so a silent failure is impossible.
         run: |
           echo "dash dash/sh boolean false" | sudo debconf-set-selections
           sudo dpkg-reconfigure -f noninteractive dash
+          sudo ln -sf /bin/bash /bin/sh
+          ls -l /bin/sh
+          test "$(readlink -f /bin/sh)" = "/bin/bash"
 
       - name: Install build dependencies
         # Package list follows the RMerlin wiki (Ubuntu 20.04 version); see the 24.04 notes in the file header

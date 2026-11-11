@@ -246,6 +246,16 @@ jobs:
           # returns /usr/bin/bash, not /bin/bash; compare the basename.
           test "$(basename "$(readlink -f /bin/sh)")" = "bash"
 
+      - name: Use public DNS resolvers
+        # NB: run #3/#4/#5 all failed because the runner's DNS resolver cannot
+        # resolve Ubuntu archive hostnames ("Temporary failure resolving" for
+        # both azure.archive.ubuntu.com and archive.ubuntu.com), while
+        # packages.microsoft.com resolves fine. Use public resolvers instead.
+        run: |
+          sudo rm -f /etc/resolv.conf
+          printf "nameserver 8.8.8.8\nnameserver 1.1.1.1\n" | sudo tee /etc/resolv.conf > /dev/null
+          getent hosts archive.ubuntu.com || echo "WARNING: archive.ubuntu.com still does not resolve"
+
       - name: Install build dependencies
         # Package list follows the RMerlin wiki (Ubuntu 20.04 version); see the 24.04 notes in the file header
         # NB: the default Azure mirror (azure.archive.ubuntu.com) fails DNS

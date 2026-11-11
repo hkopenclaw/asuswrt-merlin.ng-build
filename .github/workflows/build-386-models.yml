@@ -400,3 +400,26 @@ jobs:
             merlin/release/*.trx.sha256
             merlin/release/run${{ github.run_number }}-build-${{ matrix.model }}.log
           if-no-files-found: error
+
+      - name: Show dropbear config.log on failure
+        if: failure()
+        run: |
+          # The dropbear configure failure ("C compiler cannot create
+          # executables") hides its cause in dropbear/config.log, which is
+          # not in the step log. Print it so the failure is diagnosable
+          # from the job log alone. The file only exists if the build got
+          # as far as dropbear's configure.
+          if [ -f merlin/release/src/router/dropbear/config.log ]; then
+            echo "=== dropbear/config.log ==="
+            cat merlin/release/src/router/dropbear/config.log
+          else
+            echo "dropbear/config.log not found (build failed before dropbear configure)"
+          fi
+
+      - name: Upload dropbear config.log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropbear-config-log-${{ matrix.model }}-run${{ github.run_number }}
+          path: merlin/release/src/router/dropbear/config.log
+          if-no-files-found: ignore

@@ -369,7 +369,7 @@ jobs:
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
           cd "release/${{ matrix.tree }}/image"
-          for f in *.${{ matrix.fw_ext }}; do mv "$f" "${f%.${{ matrix.fw_ext }}-$SHORT_SHA.${{ matrix.fw_ext }}"; done
+          for f in *.${{ matrix.fw_ext }}; do mv "$f" "${f%.${{ matrix.fw_ext }}}-$SHORT_SHA.${{ matrix.fw_ext }}"; done
           ls -lh
           mv "$GITHUB_WORKSPACE/merlin/build-${{ matrix.model }}.log" "$GITHUB_WORKSPACE/merlin/run${{ github.run_number }}-build-${{ matrix.model }}.log"
 

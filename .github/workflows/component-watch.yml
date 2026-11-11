@@ -1,0 +1,47 @@
+name: Component watch
+
+# Daily check for new upstream component releases and recent CVEs.
+# Runs on GitHub Actions (no VM tokens used). Opens an issue in this repo
+# when something new is found; state lives in component-watch/state.json.
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check releases and CVEs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 component-watch/watch.py
+
+      - name: Create issue if new findings
+        if: hashFiles('component-watch/findings.md') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date -u +%F)
+          TITLE="[component-watch] New releases / CVEs on $DATE"
+          NUM=$(gh issue list --search "$TITLE in:title" --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$NUM" ]; then
+            echo "Issue #$NUM already exists, skipping"
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body-file component-watch/findings.md
+
+      - name: Commit state
+        run: |
+          git config user.name "component-watch"
+          git config user.email "component-watch@users.noreply.github.com"
+          git add component-watch/state.json
+          git diff --cached --quiet || git commit -m "component-watch: update state"
+          git push

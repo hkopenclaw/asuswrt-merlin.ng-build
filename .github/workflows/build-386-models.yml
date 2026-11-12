@@ -374,7 +374,7 @@ jobs:
           # No `make clean` here: a fresh CI checkout has nothing to clean,
           # and for HND it breaks the build (make.common errors out because
           # the 94908HND.CLEAN profile does not exist in the repo).
-          make "${{ matrix.target }}" </dev/null 2>&1 | tee "../../build-${{ matrix.model }}.log"
+          make "${{ matrix.target }}" </dev/null 2>&1 | tee "$GITHUB_WORKSPACE/merlin/build-${{ matrix.model }}.log"
           ls -lh image/
 
       - name: Suffix firmware with Merlin source commit

@@ -298,6 +298,22 @@ jobs:
           ls -l /opt/brcm-arm/bin/ | head
           /opt/brcm-arm/bin/arm-brcm-linux-uclibcgnueabi-gcc --version | head -1
           echo "/opt/brcm-arm/bin" >> "$GITHUB_PATH"
+          # The SDK6 toolchain ships its own autotools (autoreconf,
+          # autoconf, automake, aclocal, autom4te, ...) in bin/, and
+          # putting bin/ first on PATH (above) makes them shadow the
+          # system's working autotools. The toolchain's autoreconf is
+          # broken on the runner: it needs the Perl module
+          # Autom4te::ChannelDefs, whose @INC contains a hardcoded
+          # /projects/hnd/... path from the toolchain's build machine
+          # that does not exist here, so libxml2's `autoreconf -i -f`
+          # fails (run #14, AC68U 386.14_8). The system has working
+          # autotools (installed in the Install build dependencies
+          # step), so remove the toolchain's copies; the cross-compiler
+          # (arm-brcm-linux-*, arm-linux-*, arm-uclibc-*) is unaffected
+          # (distinct names, still on PATH).
+          rm -f /opt/brcm-arm/bin/autoreconf /opt/brcm-arm/bin/autoconf /opt/brcm-arm/bin/automake /opt/brcm-arm/bin/automake-1.11 /opt/brcm-arm/bin/aclocal /opt/brcm-arm/bin/aclocal-1.11 /opt/brcm-arm/bin/autoheader /opt/brcm-arm/bin/autom4te /opt/brcm-arm/bin/autoscan /opt/brcm-arm/bin/autoupdate /opt/brcm-arm/bin/ifnames /opt/brcm-arm/bin/libtool /opt/brcm-arm/bin/libtoolize /opt/brcm-arm/bin/m4
+          # Confirm the system's autoreconf is now the one found
+          which autoreconf && autoreconf --version | head -1
 
       - name: Set up HND toolchain
         if: matrix.platform == 'hnd'

@@ -3,7 +3,8 @@
 # Native build: compiles from source on the GitHub runner, without the
 # ivano Docker image. Two Broadcom platforms are supported:
 # - SDK6/SDK7 ARM (RT-AC68U, RT-AC88U, RT-AC3100, RT-AC5300), built with
-#   `make <model>` in release/src-rt-6.x.4708, toolchain
+#   `make <model>`: RT-AC68U in release/src-rt-6.x.4708; RT-AC88U,
+#   RT-AC3100 and RT-AC5300 in release/src-rt-7.14.114.x; toolchain
 #   hndtools-arm-linux-2.6.36-uclibc-4.5.3 (gcc 4.5.3 + uClibc) from
 #   RMerlin's am-toolchains repo.
 # - HND ARM (RT-AC86U), built with `make rt-ac86u` in
@@ -186,9 +187,9 @@ jobs:
           MODELS = {
             "rt-ac68u":  {"model": "rt-ac68u",  "artifact": "RT-AC68U",  "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac68u",  "fw_ext": "trx"},
             "rt-ac86u":  {"model": "rt-ac86u",  "artifact": "RT-AC86U",  "tree": "src-rt-5.02hnd",  "platform": "hnd",  "target": "rt-ac86u",  "fw_ext": "w"},
-            "rt-ac88u":  {"model": "rt-ac88u",  "artifact": "RT-AC88U",  "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac88u",  "fw_ext": "trx"},
-            "rt-ac3100": {"model": "rt-ac3100", "artifact": "RT-AC3100", "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac3100", "fw_ext": "trx"},
-            "rt-ac5300": {"model": "rt-ac5300", "artifact": "RT-AC5300", "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac5300", "fw_ext": "trx"},
+            "rt-ac88u":  {"model": "rt-ac88u",  "artifact": "RT-AC88U",  "tree": "src-rt-7.14.114.x", "platform": "sdk6", "target": "rt-ac88u",  "fw_ext": "trx"},
+            "rt-ac3100": {"model": "rt-ac3100", "artifact": "RT-AC3100", "tree": "src-rt-7.14.114.x", "platform": "sdk6", "target": "rt-ac3100", "fw_ext": "trx"},
+            "rt-ac5300": {"model": "rt-ac5300", "artifact": "RT-AC5300", "tree": "src-rt-7.14.114.x", "platform": "sdk6", "target": "rt-ac5300", "fw_ext": "trx"},
           }
           CHECKBOXES = [
             ("BUILD_AC68U", "rt-ac68u"),

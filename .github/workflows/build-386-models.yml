@@ -116,7 +116,7 @@ on:
           - "386.14_5"
           - "386.14_6"
           - "386.14_7"
-          - "386.14_8"          
+          - "386.14_8" 
           - "386.14_9"
       merlin_commit:
         description: "Full commit SHA to build from (optional; overrides merlin_ref when set)"
@@ -158,7 +158,7 @@ jobs:
             "386.14_6": "a3ef96955ceda31d15a41b2d26cebd6cca626c31",
             "386.14_7": "e293989591178c19a2809e1af0488fd0609d6b87",
             "386.14_8": "9410e685ef54c912f800699d6cb4517e003b878e",
-                        "386.14_9": "70ad264faed9993f0f0ac45a4972b44d9771f1e2",
+"386.14_9": "70ad264faed9993f0f0ac45a4972b44d9771f1e2",
           }
           commit = os.environ.get("MERLIN_COMMIT", "").strip()
           if commit:

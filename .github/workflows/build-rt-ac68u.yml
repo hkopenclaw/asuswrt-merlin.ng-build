@@ -8,7 +8,7 @@
 # toolchain the Docker image used to provide pre-installed
 # (/home/docker/am-toolchains/brcm-arm-sdk in the ivano image).
 # Build steps follow the RMerlin wiki "Compile Firmware from source"
-# (https://github.com/RMerl/asuswrt-merlin.ng/wiki/Compile-Firmware-from-source):
+# (https://github.com/Asuswrt-Merlin/asuswrt-merlin.ng/wiki/Compile-Firmware-from-source):
 # 32-bit libs -> apt -> clone am-toolchains -> symlink -> PATH -> make.
 #
 # Ubuntu 24.04 notes (the wiki was written for Ubuntu 20.04, which GitHub
@@ -48,7 +48,7 @@ on:
         required: true
         default: "386.14_x"
       am_toolchains_ref:
-        description: "Branch, tag, or commit SHA of RMerl/am-toolchains (empty = default branch; a commit SHA pins the toolchain version)"
+        description: "Branch, tag, or commit SHA of Asuswrt-Merlin/am-toolchains (empty = default branch; a commit SHA pins the toolchain version)"
         required: false
         default: ""
 
@@ -103,7 +103,7 @@ jobs:
         # Native toolchain source, no third-party image involved
         uses: actions/checkout@v4
         with:
-          repository: RMerl/am-toolchains
+          repository: Asuswrt-Merlin/am-toolchains
           ref: ${{ inputs.am_toolchains_ref }}
           path: am-toolchains
           fetch-depth: 1

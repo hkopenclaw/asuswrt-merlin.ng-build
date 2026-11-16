@@ -17,7 +17,7 @@
 #   the current kernel-4.1 one in the repo (the README's 5.3 is no longer
 #   present); the first AC86U build run is the verification.
 # Build steps follow the RMerlin wiki "Compile Firmware from source"
-# (https://github.com/RMerl/asuswrt-merlin.ng/wiki/Compile-Firmware-from-source):
+# (https://github.com/Asuswrt-Merlin/asuswrt-merlin.ng/wiki/Compile-Firmware-from-source):
 # 32-bit libs -> apt -> clone am-toolchains -> symlink -> PATH -> make.
 #
 # Model selection: one checkbox per model (boolean inputs). Tick the
@@ -122,7 +122,7 @@ on:
         required: false
         default: ""
       am_toolchains_ref:
-        description: "Branch, tag, or commit SHA of RMerl/am-toolchains (empty = default branch; a commit SHA pins the toolchain version)"
+        description: "Branch, tag, or commit SHA of Asuswrt-Merlin/am-toolchains (empty = default branch; a commit SHA pins the toolchain version)"
         required: false
         default: ""
 
@@ -285,7 +285,7 @@ jobs:
         # Native toolchain source, no third-party image involved
         uses: actions/checkout@v4
         with:
-          repository: RMerl/am-toolchains
+          repository: Asuswrt-Merlin/am-toolchains
           ref: ${{ inputs.am_toolchains_ref }}
           path: am-toolchains
           fetch-depth: 1

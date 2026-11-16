@@ -356,11 +356,13 @@ jobs:
           # bindings; configure runs in auto mode (no --with-python3 in the
           # invocation), so append --without-python --without-python3 to
           # disable them explicitly and cut off the whole binding problem chain.
+          # (Anchored on --disable-static: the libcap-ng 0.8.4 Makefile rewrote
+          # the configure line, so --enable-shared is no longer there.)
           # The router/Makefile is shared by every tree (each tree's router/
           # is a symlink to release/src/router), so this runs for SDK6 and
           # HND alike, using the matrix tree path.
           cd "merlin/release/${{ matrix.tree }}/router"
-          sed -i '/^libcap-ng\/configure:/,/^$/s|$(CONFIGURE) --enable-shared|& --without-python --without-python3|' Makefile
+          sed -i '/^libcap-ng\/configure:/,/^$/s|--disable-static|& --without-python --without-python3|' Makefile
           grep -A 5 '^libcap-ng/configure:' Makefile | grep -q -- '--without-python --without-python3'
 
       - name: Build ${{ matrix.artifact }} firmware

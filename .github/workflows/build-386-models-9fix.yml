@@ -1,0 +1,446 @@
+# Build Merlin firmware for selected 386 models (native, no Docker image)
+#
+# Native build: compiles from source on the GitHub runner, without the
+# ivano Docker image. Two Broadcom platforms are supported:
+# - SDK6/SDK7 ARM (RT-AC68U, RT-AC88U, RT-AC3100, RT-AC5300), built with
+#   `make <model>`: RT-AC68U in release/src-rt-6.x.4708; RT-AC88U,
+#   RT-AC3100 and RT-AC5300 in release/src-rt-7.14.114.x/src (the tree keeps
+#   its source in a src/ subdirectory, unlike 6.x.4708/5.02hnd
+#   which build at the tree root); toolchain hndtools-arm-linux-2.6.36-uclibc-4.5.3 (gcc 4.5.3 + uClibc) from RMerlin's am-toolchains repo.
+# - HND ARM (RT-AC86U), built with `make rt-ac86u` in
+#   release/src-rt-5.02hnd, toolchain crosstools-arm-gcc-5.5-linux-4.1-
+#   glibc-2.26-binutils-2.28.1 (gcc 5.5 + glibc 2.26, kernel 4.1) plus the
+#   matching aarch64 toolchain, also from am-toolchains (brcm-arm-hnd).
+#   HND setup follows the am-toolchains README: symlink brcm-arm-hnd to
+#   /opt/toolchains, TOOLCHAIN_BASE=/opt/toolchains, both crosstools bin
+#   dirs on PATH, arm lib dir on LD_LIBRARY_PATH. The 5.5 toolchain is
+#   the current kernel-4.1 one in the repo (the README's 5.3 is no longer
+#   present); the first AC86U build run is the verification.
+# Build steps follow the RMerlin wiki "Compile Firmware from source"
+# (https://github.com/Asuswrt-Merlin/asuswrt-merlin.ng/wiki/Compile-Firmware-from-source):
+# 32-bit libs -> apt -> clone am-toolchains -> symlink -> PATH -> make.
+#
+# Model selection: one checkbox per model (boolean inputs). Tick the
+# models to build; each selected model builds in its own parallel job,
+# so one Run workflow run produces one artifact per model. fail-fast is
+# off, so one model's failure does not cancel the others. RT-AC68U is
+# ticked by default, so pressing Run unchanged still builds AC68U only.
+#
+# Version selection: `merlin_ref` is a dropdown (single-select) of
+# firmware versions. 386.14_x is the branch (latest). 386.14_2 is the
+# tag; 386.14_3.._8 map to their version-bump commits (the exact state
+# built as that version) in the setup job. 386.14_9 maps to the
+# post-bump release-note fix commit (which includes the bump). When a
+# new version is bumped, add its version-bump commit SHA to the map below.
+# `merlin_commit` is an optional full commit SHA that overrides the
+# dropdown, so any specific commit can be built. The artifact name
+# carries the checked-out commit's short SHA, so a build from an older
+# commit is identifiable.
+#
+# Ubuntu 24.04 notes (the wiki was written for Ubuntu 20.04, which GitHub
+# no longer offers as a runner):
+# - The package list follows the wiki, with one package pre-removed:
+#   automake-1.15 (not available on 24.04; Docker builds succeeded without
+#   it, so it is not needed).
+# - Confirmed from the 2026-10-30 native run 40957100027 apt log: 24.04 has
+#   no python, gconf-editor, or libncurses5, so the list below uses
+#   python-is-python3 and drops gconf-editor and libncurses5.
+#   Note: libncurses5-dev is fine on 24.04 (nothing about it in that log),
+#   so it stays; do not confuse it with libncurses5.
+# - If any other package name is still missing on a later run, drop that
+#   one and rerun.
+# - The wiki asks to switch /bin/sh from dash back to bash (required for
+#   HND models, not necessarily for SDK6); this workflow does it anyway,
+#   using debconf non-interactively in CI.
+# - The wiki suggests rsyncing a source copy before building (for easy
+#   cleanup); in CI the checkout itself is disposable, so this step is
+#   skipped and the build runs directly in merlin/.
+#
+# Artifact layout: the firmware file (matrix.fw_ext: .trx for SDK6, .w for
+# HND), its .sha256, and the run build log are staged into merlin/release/
+# contains the files directly instead of nested under
+# release/src-rt-6.x.4708/image/ or release/src-rt-5.02hnd/image/.
+# upload-artifact v4 uses the least common ancestor of all upload paths as
+# the artifact root, so paths all under merlin/release/ upload flat. The
+# merlin/release/*.${{ matrix.fw_ext }} glob is non-recursive, so the source
+# tree under merlin/release/ is not picked up.
+#
+# The libcap-ng Python-bindings fix applies to the router/Makefile shared
+# by every tree (each tree's router/ is a symlink to release/src/router),
+# so it runs for SDK6 and HND alike, using the matrix tree path.
+
+name: Build Merlin firmware (386 models)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_ac68u:
+        description: "Build RT-AC68U"
+        required: false
+        default: true
+        type: boolean
+      build_ac86u:
+        description: "Build RT-AC86U"
+        required: false
+        default: false
+        type: boolean
+      build_ac88u:
+        description: "Build RT-AC88U"
+        required: false
+        default: false
+        type: boolean
+      build_ac3100:
+        description: "Build RT-AC3100"
+        required: false
+        default: false
+        type: boolean
+      build_ac5300:
+        description: "Build RT-AC5300"
+        required: false
+        default: false
+        type: boolean
+      build_all:
+        description: "Build all models (overrides the individual checkboxes)"
+        required: false
+        default: false
+        type: boolean
+      merlin_ref:
+        description: "Firmware version to build"
+        required: true
+        default: "386.14_x"
+        type: choice
+        options:
+          - "386.14_x"
+          - "386.14_2"
+          - "386.14_3"
+          - "386.14_4"
+          - "386.14_5"
+          - "386.14_6"
+          - "386.14_7"
+          - "386.14_8"
+          - "386.14_9"
+      merlin_commit:
+        description: "Full commit SHA to build from (optional; overrides merlin_ref when set)"
+        required: false
+        default: ""
+      am_toolchains_ref:
+        description: "Branch, tag, or commit SHA of Asuswrt-Merlin/am-toolchains (empty = default branch; a commit SHA pins the toolchain version)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      merlin_ref: ${{ steps.resolve-ref.outputs.ref }}
+    steps:
+      - name: Resolve Merlin ref
+        id: resolve-ref
+        env:
+          MERLIN_REF: ${{ inputs.merlin_ref }}
+          MERLIN_COMMIT: ${{ inputs.merlin_commit }}
+        run: |
+          python3 - <<'EOF'
+          import os
+          # Version -> git ref. 386.14_x is the branch (latest); 386.14_2
+          # is the tag; 386.14_3.._8 map to their version-bump commits (the
+          # exact state built as that version). 386.14_9 maps to the
+          # post-bump release-note fix commit (includes the bump). Add a
+          # new version's version-bump commit SHA here when it is bumped.
+          VERSION_REFS = {
+            "386.14_x": "386.14_x",
+            "386.14_2": "386.14_2",
+            "386.14_3": "4dddb0a85211c2d94f00468982cd0bc798529e97",
+            "386.14_4": "b32a90458e16039fdfd37fa9068830bdb0681fad",
+            "386.14_5": "a821511bce9aa95ca8c62a85278cb5c8aed8a647",
+            "386.14_6": "a3ef96955ceda31d15a41b2d26cebd6cca626c31",
+            "386.14_7": "e293989591178c19a2809e1af0488fd0609d6b87",
+            "386.14_8": "9410e685ef54c912f800699d6cb4517e003b878e",
+            "386.14_9": "65d69443a67edcfa00b5432f4e07e76450eaba78",
+          }
+          commit = os.environ.get("MERLIN_COMMIT", "").strip()
+          if commit:
+            ref = commit
+            print(f"Building from commit {commit} (merlin_commit overrides merlin_ref)")
+          else:
+            version = os.environ.get("MERLIN_REF", "386.14_x")
+            ref = VERSION_REFS.get(version)
+            if ref is None:
+              raise SystemExit(f"Unknown version: {version}. Valid: {', '.join(VERSION_REFS)}")
+            print(f"Building version {version} (ref {ref})")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"ref={ref}\n")
+          EOF
+
+      - name: Build model matrix
+        id: set-matrix
+        env:
+          BUILD_AC68U: ${{ inputs.build_ac68u }}
+          BUILD_AC86U: ${{ inputs.build_ac86u }}
+          BUILD_AC88U: ${{ inputs.build_ac88u }}
+          BUILD_AC3100: ${{ inputs.build_ac3100 }}
+          BUILD_AC5300: ${{ inputs.build_ac5300 }}
+          BUILD_ALL: ${{ inputs.build_all }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          MODELS = {
+            "rt-ac68u":  {"model": "rt-ac68u",  "artifact": "RT-AC68U",  "tree": "src-rt-6.x.4708", "platform": "sdk6", "target": "rt-ac68u",  "fw_ext": "trx"},
+            "rt-ac86u":  {"model": "rt-ac86u",  "artifact": "RT-AC86U",  "tree": "src-rt-5.02hnd",  "platform": "hnd",  "target": "rt-ac86u",  "fw_ext": "w"},
+            "rt-ac88u":  {"model": "rt-ac88u",  "artifact": "RT-AC88U",  "tree": "src-rt-7.14.114.x/src", "platform": "sdk6", "target": "rt-ac88u",  "fw_ext": "trx"},
+            "rt-ac3100": {"model": "rt-ac3100", "artifact": "RT-AC3100", "tree": "src-rt-7.14.114.x/src", "platform": "sdk6", "target": "rt-ac3100", "fw_ext": "trx"},
+            "rt-ac5300": {"model": "rt-ac5300", "artifact": "RT-AC5300", "tree": "src-rt-7.14.114.x/src", "platform": "sdk6", "target": "rt-ac5300", "fw_ext": "trx"},
+          }
+          CHECKBOXES = [
+            ("BUILD_AC68U", "rt-ac68u"),
+            ("BUILD_AC86U", "rt-ac86u"),
+            ("BUILD_AC88U", "rt-ac88u"),
+            ("BUILD_AC3100", "rt-ac3100"),
+            ("BUILD_AC5300", "rt-ac5300"),
+          ]
+          if os.environ.get("BUILD_ALL") == "true":
+            selected = list(MODELS.keys())
+          else:
+            selected = [m for env, m in CHECKBOXES if os.environ.get(env) == "true"]
+          if not selected:
+            raise SystemExit("No models selected. Tick at least one model checkbox, or tick Build all models.")
+          matrix = {"include": [MODELS[m] for m in selected]}
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write("matrix=" + json.dumps(matrix) + "\n")
+          print("Models selected: " + ", ".join(selected))
+          EOF
+
+  build:
+    needs: setup
+    strategy:
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+      fail-fast: false
+    runs-on: ubuntu-24.04
+    # A full build with -j1 is slow; allow up to the GitHub job limit of 6 hours
+    timeout-minutes: 360
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        # Merlin source plus build products need 10GB or more; clear the runner's pre-installed large items first
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h
+
+      - name: Enable 32-bit support
+        # The old Broadcom toolchains are 32-bit; a 64-bit host needs i386 support
+        run: sudo dpkg --add-architecture i386
+
+      - name: Switch /bin/sh from dash to bash
+        # Required by the wiki (mandatory for HND models, harmless for SDK6); non-interactive in CI
+        # dpkg-reconfigure can silently leave /bin/sh pointing at dash (run #1
+        # failed because of it: dash `echo -e` prints a literal `-e`, corrupting
+        # bcmdrivers/Kconfig.autogen and failing kernel oldconfig). Force the
+        # symlink and prove it, so a silent failure is impossible.
+        run: |
+          echo "dash dash/sh boolean false" | sudo debconf-set-selections
+          sudo dpkg-reconfigure -f noninteractive dash
+          sudo ln -sf /bin/bash /bin/sh
+          ls -l /bin/sh
+          # NB: readlink -f canonicalises through /bin -> /usr/bin, so it
+          # returns /usr/bin/bash, not /bin/bash; compare the basename.
+          test "$(basename "$(readlink -f /bin/sh)")" = "bash"
+
+      - name: Use public DNS resolvers
+        # NB: run #3/#4/#5 all failed because the runner's DNS resolver cannot
+        # resolve Ubuntu archive hostnames ("Temporary failure resolving" for
+        # both azure.archive.ubuntu.com and archive.ubuntu.com), while
+        # packages.microsoft.com resolves fine. Use public resolvers instead.
+        run: |
+          sudo rm -f /etc/resolv.conf
+          printf "nameserver 8.8.8.8\nnameserver 1.1.1.1\n" | sudo tee /etc/resolv.conf > /dev/null
+          getent hosts archive.ubuntu.com || echo "WARNING: archive.ubuntu.com still does not resolve"
+
+      - name: Install build dependencies
+        # Package list follows the RMerlin wiki (Ubuntu 20.04 version); see the 24.04 notes in the file header
+        # NB: the default Azure mirror (azure.archive.ubuntu.com) fails DNS
+        # resolution on these runners (run #3/#4: "Temporary failure resolving"),
+        # so apt-get update fetches no indexes and libelf1:i386 is not found.
+        # Point apt at the main archive instead; it is slower but reliable.
+        run: |
+          sudo sed -i -e 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu|' -e 's|https\?://security\.ubuntu\.com/ubuntu|http://archive.ubuntu.com/ubuntu|' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update
+          sudo apt-get install -y libtool-bin cmake libproxy-dev uuid-dev liblzo2-dev autoconf autoconf-archive automake bash bison \
+            bzip2 diffutils file flex m4 g++ gawk groff-base libncurses5-dev libtool libslang2 make patch perl pkg-config shtool \
+            subversion tar texinfo zlib1g zlib1g-dev git gettext libexpat1-dev libssl-dev cvs gperf unzip \
+            python-is-python3 libxml-parser-perl gcc-multilib libxml2-dev g++-multilib mtd-utils \
+            libncurses5-dev libvorbis-dev git autopoint autogen sed build-essential intltool libglib2.0-dev \
+            xutils-dev lib32z1-dev lib32stdc++6 xsltproc gtk-doc-tools libelf1:i386 gengetopt libltdl-dev
+
+      - name: Checkout Merlin source
+        uses: actions/checkout@v4
+        with:
+          repository: hkopenclaw/asuswrt-merlin.ng
+          ref: ${{ needs.setup.outputs.merlin_ref }}
+          path: merlin
+          fetch-depth: 1
+
+      - name: Checkout RMerlin toolchains
+        # Native toolchain source, no third-party image involved
+        uses: actions/checkout@v4
+        with:
+          repository: Asuswrt-Merlin/am-toolchains
+          ref: ${{ inputs.am_toolchains_ref }}
+          path: am-toolchains
+          fetch-depth: 1
+
+      - name: Set up SDK6 toolchain
+        if: matrix.platform == 'sdk6'
+        # Wiki SDK6/SDK7 ARM section: symlink + PATH
+        run: |
+          sudo ln -s "$GITHUB_WORKSPACE/am-toolchains/brcm-arm-sdk/hndtools-arm-linux-2.6.36-uclibc-4.5.3" /opt/brcm-arm
+          ln -s "$GITHUB_WORKSPACE/am-toolchains/brcm-arm-sdk" "$GITHUB_WORKSPACE/merlin/release/${{ matrix.tree }}/toolchains"
+          ls -l /opt/brcm-arm/bin/ | head
+          /opt/brcm-arm/bin/arm-brcm-linux-uclibcgnueabi-gcc --version | head -1
+          echo "/opt/brcm-arm/bin" >> "$GITHUB_PATH"
+          # The SDK6 toolchain ships its own autotools (autoreconf,
+          # autoconf, automake, aclocal, autom4te, ...) in bin/, and
+          # putting bin/ first on PATH (above) makes them shadow the
+          # system's working autotools. The toolchain's autoreconf is
+          # broken on the runner: it needs the Perl module
+          # Autom4te::ChannelDefs, whose @INC contains a hardcoded
+          # /projects/hnd/... path from the toolchain's build machine
+          # that does not exist here, so libxml2's `autoreconf -i -f`
+          # fails (run #14, AC68U 386.14_8). The system has working
+          # autotools (installed in the Install build dependencies
+          # step), so remove the toolchain's copies; the cross-compiler
+          # (arm-brcm-linux-*, arm-linux-*, arm-uclibc-*) is unaffected
+          # (distinct names, still on PATH).
+          rm -f /opt/brcm-arm/bin/autoreconf /opt/brcm-arm/bin/autoconf /opt/brcm-arm/bin/automake /opt/brcm-arm/bin/automake-1.11 /opt/brcm-arm/bin/aclocal /opt/brcm-arm/bin/aclocal-1.11 /opt/brcm-arm/bin/autoheader /opt/brcm-arm/bin/autom4te /opt/brcm-arm/bin/autoscan /opt/brcm-arm/bin/autoupdate /opt/brcm-arm/bin/ifnames /opt/brcm-arm/bin/libtool /opt/brcm-arm/bin/libtoolize /opt/brcm-arm/bin/m4
+          # Confirm the system's autoreconf is now the one found
+          which autoreconf && autoreconf --version | head -1
+
+      - name: Set up HND toolchain
+        if: matrix.platform == 'hnd'
+        # am-toolchains README BCM-HND section (kernel 4.1 toolchain):
+        # symlink brcm-arm-hnd to /opt/toolchains, TOOLCHAIN_BASE, both
+        # crosstools bin dirs on PATH, arm lib dir on LD_LIBRARY_PATH.
+        # The 5.5 toolchain is the current kernel-4.1 one in the repo
+        # (the README's 5.3 is no longer present).
+        run: |
+          sudo ln -s "$GITHUB_WORKSPACE/am-toolchains/brcm-arm-hnd" /opt/toolchains
+          # NB: the 386.14_2 source (make.common) hard-codes the 5.3 toolchain
+          # paths (DEFAULT_TOOLCHAIN_LINUX_4_1_0_ARM/AARCH64), but the repo
+          # only has the 5.5 toolchain now. Symlink the 5.5 dirs to the 5.3
+          # paths the build expects (run #6 died in prebuild_checks because
+          # the 5.3 dir did not exist).
+          sudo ln -s /opt/toolchains/crosstools-arm-gcc-5.5-linux-4.1-glibc-2.26-binutils-2.28.1 /opt/toolchains/crosstools-arm-gcc-5.3-linux-4.1-glibc-2.22-binutils-2.25
+          sudo ln -s /opt/toolchains/crosstools-aarch64-gcc-5.5-linux-4.1-glibc-2.26-binutils-2.28.1 /opt/toolchains/crosstools-aarch64-gcc-5.3-linux-4.1-glibc-2.22-binutils-2.25
+          test -d /opt/toolchains/crosstools-arm-gcc-5.3-linux-4.1-glibc-2.22-binutils-2.25
+          test -d /opt/toolchains/crosstools-aarch64-gcc-5.3-linux-4.1-glibc-2.22-binutils-2.25
+          {
+            echo "TOOLCHAIN_BASE=/opt/toolchains"
+            echo "LD_LIBRARY_PATH=/opt/toolchains/crosstools-arm-gcc-5.5-linux-4.1-glibc-2.26-binutils-2.28.1/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          } >> "$GITHUB_ENV"
+          {
+            echo "/opt/toolchains/crosstools-arm-gcc-5.5-linux-4.1-glibc-2.26-binutils-2.28.1/usr/bin"
+            echo "/opt/toolchains/crosstools-aarch64-gcc-5.5-linux-4.1-glibc-2.26-binutils-2.28.1/usr/bin"
+          } >> "$GITHUB_PATH"
+          ls /opt/toolchains/
+          ls /opt/toolchains/crosstools-arm-gcc-5.5-linux-4.1-glibc-2.26-binutils-2.28.1/usr/bin/ | head
+
+      - name: Disable libcap-ng Python and Python3 bindings (firmware doesn't use them)
+        run: |
+          # The libcap-ng Python and Python3 bindings need target Python headers
+          # when cross-compiling, but the firmware itself does not use these
+          # bindings; configure runs in auto mode (no --with-python3 in the
+          # invocation), so append --without-python --without-python3 to
+          # disable them explicitly and cut off the whole binding problem chain.
+          # The router/Makefile is shared by every tree (each tree's router/
+          # is a symlink to release/src/router), so this runs for SDK6 and
+          # HND alike, using the matrix tree path.
+          cd "merlin/release/${{ matrix.tree }}/router"
+          sed -i '/^libcap-ng\/configure:/,/^$/s|$(CONFIGURE) --enable-shared|& --without-python --without-python3|' Makefile
+          grep -A 5 '^libcap-ng/configure:' Makefile | grep -q -- '--without-python --without-python3'
+
+      - name: Build ${{ matrix.artifact }} firmware
+        run: |
+          # Without pipefail, the exit status of `make ... | tee build.log`
+          # comes from tee, so a failed make would still count as success
+          # until the Generate checksums step exposed it; with pipefail, the
+          # build step fails at the right place
+          set -o pipefail
+          export MAKEFLAGS="-j 1"
+          export MERLINUPDATE=y
+          cd "merlin/release/${{ matrix.tree }}"
+          # Close stdin: an unanswered Kconfig option during make would wait
+          # for input, and CI without a TTY would hang there
+          # No `make clean` here: a fresh CI checkout has nothing to clean,
+          # and for HND it breaks the build (make.common errors out because
+          # the 94908HND.CLEAN profile does not exist in the repo).
+          make "${{ matrix.target }}" </dev/null 2>&1 | tee "$GITHUB_WORKSPACE/merlin/build-${{ matrix.model }}.log"
+          ls -lh image/
+
+      - name: Suffix firmware with Merlin source commit
+        id: merlin_commit
+        run: |
+          cd merlin
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          FULL_SHA="$(git rev-parse HEAD)"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          cd "release/${{ matrix.tree }}/image"
+          for f in *.${{ matrix.fw_ext }}; do mv "$f" "${f%.${{ matrix.fw_ext }}}-$SHORT_SHA.${{ matrix.fw_ext }}"; done
+          ls -lh
+          mv "$GITHUB_WORKSPACE/merlin/build-${{ matrix.model }}.log" "$GITHUB_WORKSPACE/merlin/run${{ github.run_number }}-build-${{ matrix.model }}.log"
+
+      - name: Generate checksums
+        run: |
+          cd "merlin/release/${{ matrix.tree }}/image"
+          for f in *.${{ matrix.fw_ext }}; do sha256sum "$f" > "$f.sha256"; done
+          ls -lh
+
+      - name: Stage firmware for upload (flat, under release/)
+        # Flatten the artifact layout: copy the firmware file, its .sha256, and the
+        # run build log into merlin/release/, so the downloaded artifact zip
+        # contains the files directly instead of nested under
+        # release/src-rt-*/image/. See the file header for why this
+        # works (least-common-ancestor root) and why the source tree under
+        # merlin/release/ is not picked up (non-recursive glob).
+        run: |
+          cp "merlin/release/${{ matrix.tree }}/image"/*.${{ matrix.fw_ext }} "merlin/release/${{ matrix.tree }}/image"/*.${{ matrix.fw_ext }}.sha256 merlin/release/
+          cp "$GITHUB_WORKSPACE/merlin/run${{ github.run_number }}-build-${{ matrix.model }}.log" merlin/release/
+          ls -lh merlin/release/*.${{ matrix.fw_ext }} merlin/release/*.${{ matrix.fw_ext }}.sha256 "merlin/release/run${{ github.run_number }}-build-${{ matrix.model }}.log"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-merlin-${{ inputs.merlin_ref }}-${{ steps.merlin_commit.outputs.short_sha }}
+          path: |
+            merlin/release/*.${{ matrix.fw_ext }}
+            merlin/release/*.${{ matrix.fw_ext }}.sha256
+            merlin/release/run${{ github.run_number }}-build-${{ matrix.model }}.log
+          if-no-files-found: error
+
+      - name: Show dropbear config.log on failure
+        if: failure()
+        run: |
+          # The dropbear configure failure ("C compiler cannot create
+          # executables") hides its cause in dropbear/config.log, which is
+          # not in the step log. Print it so the failure is diagnosable
+          # from the job log alone. The file only exists if the build got
+          # as far as dropbear's configure.
+          if [ -f merlin/release/src/router/dropbear/config.log ]; then
+            echo "=== dropbear/config.log ==="
+            cat merlin/release/src/router/dropbear/config.log
+          else
+            echo "dropbear/config.log not found (build failed before dropbear configure)"
+          fi
+
+      - name: Upload dropbear config.log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropbear-config-log-${{ matrix.model }}-run${{ github.run_number }}
+          path: merlin/release/src/router/dropbear/config.log
+          if-no-files-found: ignore

@@ -160,7 +160,7 @@ jobs:
             "386.14_6": "a3ef96955ceda31d15a41b2d26cebd6cca626c31",
             "386.14_7": "e293989591178c19a2809e1af0488fd0609d6b87",
             "386.14_8": "9410e685ef54c912f800699d6cb4517e003b878e",
-            "386.14_9": "fa1d722691e7f37149d5d15e3f38e5a86c783091",
+            "386.14_9": "5c0409c28bb9157b93c7bada0873e03ffe912265",
           }
           commit = os.environ.get("MERLIN_COMMIT", "").strip()
           if commit:

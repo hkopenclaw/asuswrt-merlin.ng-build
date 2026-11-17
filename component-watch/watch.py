@@ -36,9 +36,10 @@ COMPONENTS = {
     "miniupnpd": "miniupnp/miniupnp",
     "json-c": "json-c/json-c",
     "expat": "libexpat/libexpat",
+    "zlib": "madler/zlib",
 }
 
-CVE_KEYWORDS = ["openssl", "openvpn", "curl", "dnsmasq", "busybox", "json-c", "stubby", "inadyn", "miniupnp", "expat"]
+CVE_KEYWORDS = ["openssl", "openvpn", "curl", "dnsmasq", "busybox", "json-c", "stubby", "inadyn", "miniupnp", "expat", "zlib"]
 
 # Signals that a CVE is actually about the product (not merely mentioning it).
 # NVD keyword search is noisy: it matches any CVE whose description contains

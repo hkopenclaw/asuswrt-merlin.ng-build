@@ -9,3 +9,6 @@ Headline changes since 386.14_8:
 - tor updated to 0.4.9.17.
 - wsdd2 updated to the 2023-12-21 snapshot.
 - Chart.js updated to 3.9.1.
+- Release-note lookup fixed: the Release Note dialog now reads this note from the custom fwcheck site.
+- Settings backup filename now uses "_" before the revision number.
+- Reverted the mobile Speedtest history header change from 386.14_8.

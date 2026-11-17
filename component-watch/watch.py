@@ -39,7 +39,19 @@ COMPONENTS = {
     "zlib": "madler/zlib",
 }
 
-CVE_KEYWORDS = ["openssl", "openvpn", "curl", "dnsmasq", "busybox", "json-c", "stubby", "inadyn", "miniupnp", "expat", "zlib"]
+# GitLab-hosted components. Unlike GitHub's /releases/latest (single
+# latest release), the GitLab releases API returns a list, newest first,
+# so each entry also carries a tag prefix: only releases whose tag starts
+# with the prefix are tracked. This matters for libxml2: the fork is on
+# the 2.13 branch (2.15 bumped the SONAME to libxml2.so.16 and removed
+# ELF symbol versioning, so 2.15.x cannot be used), so only 2.13.x
+# releases are tracked — a future v2.13.10 security backport would be
+# actionable, while 2.15.x releases are not.
+GITLAB_COMPONENTS = {
+    "libxml2": {"project": "GNOME/libxml2", "prefix": "v2.13."},
+}
+
+CVE_KEYWORDS = ["openssl", "openvpn", "curl", "dnsmasq", "busybox", "json-c", "stubby", "inadyn", "miniupnp", "expat", "zlib", "libxml2"]
 
 # Signals that a CVE is actually about the product (not merely mentioning it).
 # NVD keyword search is noisy: it matches any CVE whose description contains
@@ -59,6 +71,8 @@ CVE_SIGNALS = {
     "inadyn": {"refs": ["github.com/troglobit/inadyn", "troglobit.com"], "name": "inadyn"},
     "miniupnp": {"refs": ["github.com/miniupnp/miniupnp", "miniupnp.free.fr"], "name": "miniupnp"},
     "expat": {"refs": ["libexpat.org", "github.com/libexpat/libexpat"], "name": "expat"},
+    "zlib": {"refs": ["zlib.net", "github.com/madler/zlib"], "name": "zlib"},
+    "libxml2": {"refs": ["gitlab.gnome.org/GNOME/libxml2", "xmlsoft.org"], "name": "libxml2"},
 }
 
 STATE_FILE = "component-watch/state.json"
@@ -82,6 +96,33 @@ def gh_api(url):
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
+
+
+def gitlab_api(url):
+    """Unauthenticated GitLab API GET (public projects need no token)."""
+    headers = {"User-Agent": "component-watch"}
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def gitlab_latest_release(project, prefix):
+    """Latest GitLab release whose tag starts with `prefix`.
+
+    The GitLab releases API returns a list, newest first. Returns
+    (tag, url, released_at) or (\"\", \"\", \"\") when no release matches.
+    """
+    encoded = urllib.parse.quote(project, safe="")
+    url = (f"https://gitlab.gnome.org/api/v4/projects/{encoded}"
+           f"/releases?per_page=30")
+    releases = gitlab_api(url)
+    for rel in releases:
+        tag = rel.get("tag_name", "")
+        if tag and tag.startswith(prefix):
+            page = (f"https://gitlab.gnome.org/{project}"
+                    f"/-/releases/{urllib.parse.quote(tag, safe='')}")
+            return tag, page, rel.get("released_at", "")
+    return "", "", ""
 
 
 def gh_api_request(method, url, payload=None):
@@ -191,6 +232,9 @@ def render_body(run_time, new_releases, new_cves, state):
     lines.append("## Already known / tracked")
     lines.append("Current tracked releases:")
     for name in COMPONENTS:
+        tag = state["releases"].get(name, "(unknown)")
+        lines.append(f"- {name}: `{tag}`")
+    for name in GITLAB_COMPONENTS:
         tag = state["releases"].get(name, "(unknown)")
         lines.append(f"- {name}: `{tag}`")
     lines.append("")
@@ -308,6 +352,27 @@ def main():
             prev = state["releases"].get(name)
             if not tag:
                 print(f"WARN: {name}: no tag_name in response")
+                continue
+            if prev is None:
+                print(f"{name}: baseline {tag}")
+            elif tag != prev:
+                new_releases.append({
+                    "name": name, "old": prev, "new": tag,
+                    "url": url, "published_at": published,
+                })
+            state["releases"][name] = tag
+        except Exception as e:
+            print(f"WARN: {name} release check failed: {e}")
+
+    # Releases (GitLab-hosted; prefix-filtered, see GITLAB_COMPONENTS)
+    for name, spec in GITLAB_COMPONENTS.items():
+        try:
+            tag, url, published = gitlab_latest_release(
+                spec["project"], spec["prefix"])
+            prev = state["releases"].get(name)
+            if not tag:
+                print(f"WARN: {name}: no release matching "
+                      f"prefix {spec['prefix']!r}")
                 continue
             if prev is None:
                 print(f"{name}: baseline {tag}")

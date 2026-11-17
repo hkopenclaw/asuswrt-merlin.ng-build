@@ -28,6 +28,7 @@
     "json-c": "json-c-0.19-20260627",
     "miniupnpd": "miniupnpc_2_3_5",
     "stubby": "v0.4.3",
-    "zlib": "v1.4"
+    "zlib": "v1.4",
+    "libxml2": "v2.13.9"
   }
 }

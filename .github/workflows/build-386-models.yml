@@ -68,6 +68,18 @@
 # The libcap-ng Python-bindings fix applies to the router/Makefile shared
 # by every tree (each tree's router/ is a symlink to release/src/router),
 # so it runs for SDK6 and HND alike, using the matrix tree path.
+#
+# Auto-release: tick the "Create a GitHub release" checkbox when
+# triggering a run and the release job runs after a successful build
+# (AC68U only, as _3-_9 were). It resolves the old ref from the latest
+# release tag, runs tools/gen-release.py to build the body draft plus
+# the renamed .trx and .md5, and creates the release with gh. The job
+# refuses to publish when the draft contains TODO lines (an unmatched
+# or ambiguous change line) and uploads the draft as an artifact for
+# manual review instead; it also refuses when the tag already exists.
+# The release body is generated, not hand-written: review the release
+# after it is created, and fix the wording in the next version's
+# Changelog entry / fwcheck note if it needs it.
 
 name: Build Merlin firmware (386 models)
 
@@ -127,6 +139,11 @@ on:
         description: "Branch, tag, or commit SHA of Asuswrt-Merlin/am-toolchains (empty = default branch; a commit SHA pins the toolchain version)"
         required: false
         default: ""
+      create_release:
+        description: "Create a GitHub release with the RT-AC68U firmware after a successful build (AC68U only; the release job runs tools/gen-release.py to build the body)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -137,6 +154,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       merlin_ref: ${{ steps.resolve-ref.outputs.ref }}
+      version_refs: ${{ steps.resolve-ref.outputs.version_refs }}
     steps:
       - name: Resolve Merlin ref
         id: resolve-ref
@@ -145,7 +163,7 @@ jobs:
           MERLIN_COMMIT: ${{ inputs.merlin_commit }}
         run: |
           python3 - <<'EOF'
-          import os
+          import json, os
           # Version -> git ref. 386.14_x is the branch (latest); 386.14_2
           # is the tag; 386.14_3.._8 map to their version-bump commits (the
           # exact state built as that version). 386.14_9 maps to the
@@ -174,6 +192,9 @@ jobs:
             print(f"Building version {version} (ref {ref})")
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
             f.write(f"ref={ref}\n")
+            # The whole version map, for the release job: it maps the
+            # latest release tag (e.g. 386.14_8) to the old fork ref.
+            f.write("version_refs=" + json.dumps(VERSION_REFS) + "\n")
           EOF
 
       - name: Build model matrix
@@ -445,4 +466,141 @@ jobs:
         with:
           name: dropbear-config-log-${{ matrix.model }}-run${{ github.run_number }}
           path: merlin/release/src/router/dropbear/config.log
+          if-no-files-found: ignore
+
+  release:
+    needs: [setup, build]
+    # Only when the user ticked "Create a GitHub release" when
+    # triggering the run, and every selected model built successfully.
+    # A partial or failed build never publishes a release.
+    if: ${{ inputs.create_release && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      # contents: write is needed to create the release (and its tag).
+      # The workflow-level permission stays read-only.
+      contents: write
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout Merlin source
+        uses: actions/checkout@v4
+        with:
+          repository: hkopenclaw/asuswrt-merlin.ng
+          ref: ${{ needs.setup.outputs.merlin_ref }}
+          path: merlin
+          fetch-depth: 0
+
+      - name: Download RT-AC68U firmware artifact
+        # Releases are AC68U-only (as _3-_9 were). The pattern matches
+        # the single AC68U artifact of this run, whatever the ref.
+        uses: actions/download-artifact@v4
+        with:
+          pattern: RT-AC68U-merlin-*
+          merge-multiple: true
+          path: firmware
+
+      - name: Resolve release refs
+        id: refs
+        env:
+          VERSION_REFS: ${{ needs.setup.outputs.version_refs }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, subprocess
+          def out(key, value):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write(f"{key}={value}\n")
+          # New ref: the commit the build job checked out.
+          new_ref = subprocess.run(
+              ["git", "-C", "merlin", "rev-parse", "HEAD"],
+              capture_output=True, text=True, check=True).stdout.strip()
+          # New version: EXTENDNO in the built source.
+          with open("merlin/release/src-rt/version.conf") as f:
+              m = re.search(r"^EXTENDNO=(\d+)\s*$", f.read(), re.M)
+          if not m:
+              raise SystemExit("cannot find EXTENDNO in the built source")
+          new_ver = m.group(1)
+          tag = "386.14_" + new_ver
+          # Old ref: the latest release's tag mapped through the version
+          # map. Falls back to the 386.14_2 base when there is no
+          # previous release yet.
+          version_refs = json.loads(os.environ["VERSION_REFS"])
+          latest = subprocess.run(
+              ["gh", "release", "list", "--limit", "1",
+               "--json", "tagName", "--jq", ".[0].tagName"],
+              capture_output=True, text=True, check=True).stdout.strip()
+          if latest and latest in version_refs:
+              old_ref = version_refs[latest]
+              print(f"Latest release is {latest}; old ref {old_ref}")
+          else:
+              old_ref = version_refs["386.14_2"]
+              print(f"No previous release in the version map "
+                    f"(latest tag: {latest!r}); using base 386.14_2")
+          out("new_ref", new_ref)
+          out("new_ver", new_ver)
+          out("old_ref", old_ref)
+          out("tag", tag)
+          note = f"fwcheck/386_14_{new_ver}_note.txt"
+          out("note", note if os.path.exists(note) else "")
+          if os.path.exists(note):
+              print(f"fwcheck note: {note}")
+          else:
+              print(f"No fwcheck note at {note}; body from the changelog only")
+          EOF
+
+      - name: Generate release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTE_ARGS=()
+          if [ -n "${{ steps.refs.outputs.note }}" ]; then
+            NOTE_ARGS=(--note "${{ steps.refs.outputs.note }}")
+          fi
+          TRX="$(ls firmware/*.trx | head -1)"
+          echo "trx: $TRX"
+          python3 tools/gen-release.py \
+            "${{ steps.refs.outputs.old_ref }}" \
+            "${{ steps.refs.outputs.new_ref }}" \
+            --trx "$TRX" \
+            --run "${{ github.run_number }}" \
+            "${NOTE_ARGS[@]}" \
+            --fork merlin \
+            --out release-staging
+
+      - name: Refuse to publish a draft with TODO lines
+        # A TODO means a change line could not be matched to a commit
+        # (or was ambiguous). Publishing it would put a TODO placeholder
+        # in the release body. Fail instead; the draft is uploaded
+        # below for manual review and a manual release.
+        run: |
+          if grep -q "TODO:" release-staging/RELEASE-BODY-DRAFT.md; then
+            echo "::error::The release body draft contains TODO lines. Review the release-draft artifact and publish the release manually."
+            grep -n "TODO:" release-staging/RELEASE-BODY-DRAFT.md
+            exit 1
+          fi
+          echo "Draft has no TODO lines."
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.refs.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists. Delete it first if this is a re-run."
+            exit 1
+          fi
+          gh release create "$TAG" \
+            release-staging/RT-AC68U_386.14_*.trx \
+            release-staging/RT-AC68U_386.14_*.md5 \
+            --title "Stable: $TAG" \
+            --notes-file release-staging/RELEASE-BODY-DRAFT.md
+          echo "Release $TAG created: https://github.com/hkopenclaw/asuswrt-merlin.ng-build/releases/tag/$TAG"
+
+      - name: Upload release draft on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-draft-run${{ github.run_number }}
+          path: release-staging/
           if-no-files-found: ignore
